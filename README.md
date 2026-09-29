@@ -13,7 +13,7 @@ python3 -m venv .venv
 .venv/bin/python server.py
 ```
 
-Abre [http://127.0.0.1:8787](http://127.0.0.1:8787). En Windows usa `.venv\\Scripts\\python.exe` en los comandos. El servidor escucha solo en loopback. Para la varita de esquemas, instala Codex CLI por separado y asegúrate de que `codex` esté en `PATH`.
+El servidor obtiene la IPv4 con `tailscale ip -4` y escucha solo en esa interfaz, puerto 8787. Abre `http://<IP-de-Tailscale>:8787` desde un equipo autorizado en la misma red. Si Tailscale no está disponible, el servidor no arranca. En Windows usa `.venv\\Scripts\\python.exe` en los comandos. Para la varita de esquemas, instala Codex CLI por separado y asegúrate de que `codex` esté en `PATH`.
 
 ## Flujo
 

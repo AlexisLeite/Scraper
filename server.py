@@ -1,5 +1,6 @@
 """Local commercial page analysis using Jev and DOM evidence."""
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -616,4 +617,11 @@ async def generate_endpoint(request: GenerateRequest):
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host='127.0.0.1', port=8787)
+    try:
+        result = subprocess.run(['tailscale', 'ip', '-4'], capture_output=True, text=True,
+                                timeout=5, check=True)
+        host = str(ipaddress.IPv4Address(result.stdout.strip()))
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            ipaddress.AddressValueError) as exc:
+        raise SystemExit('Tailscale no tiene una dirección IPv4 disponible.') from exc
+    uvicorn.run(app, host=host, port=8787)
