@@ -40,7 +40,8 @@ def capture_page(url):
                 pass
             _overlay_marker(page)
             html = page.content()
-            screenshot = base64.b64encode(page.screenshot(type='jpeg', quality=60)).decode('ascii')
+            screenshot = base64.b64encode(page.screenshot(type='jpeg', quality=60,
+                                                         full_page=True)).decode('ascii')
             return html, screenshot, page.url, page.title()
         finally:
             browser.close()

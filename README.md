@@ -40,3 +40,7 @@ Para repetir las cinco comprobaciones públicas comparables de la estrategia (re
 ```bash
 .venv/bin/python tests/live_regression.py
 ```
+
+## Orquestador
+
+`src/common/scrapper/` contiene un recorrido concurrente y auditable de URI. Recibe procesadores intercambiables, emite eventos de contenido y conserva HTML completo, capturas, resultados, reintentos y decisiones de navegación en `data/scrapper/` (ignorado por Git). Las páginas dudosas se visitan y clasifican, pero no generan saltos automáticos. Consulta [su guía](src/common/scrapper/README.md) para configuración y acceso al historial.

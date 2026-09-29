@@ -59,7 +59,7 @@ def test_decisions_abstain_and_keep_evidence():
     soup, structured = clean_document(HTML)
     groups = candidate_groups(soup, 'https://example.org/crema')
     page, decisions = analyzer.decide_groups('Tienda', 'https://example.org/crema', soup, structured, groups, fake_predict)
-    assert page['value'] == 'product' and page['model'] == 'Jev'
+    assert page['value'] == 'product' and page['model'] == 'jev-test'
     assert any(d['value'] == 'other' for d in decisions)
     assert all(d['evidence_ids'] == [d['group_id']] for d in decisions)
 

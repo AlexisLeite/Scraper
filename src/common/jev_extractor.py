@@ -57,7 +57,8 @@ def decide_groups(title, url, soup, structured, groups, predict=jev_connector.pr
                            'criteria': {'product': 'Ficha de un producto individual', 'listing': 'Listado de varios productos',
                                         'other': 'Otra página o evidencia insuficiente'}}}
     page_result = predict(state, page_q)
-    kind, kind_confidence = _choice(page_result.get('answers', {}).get('page_kind'), page_q['page_kind']['criteria'])
+    page_answer = page_result.get('answers', {}).get('page_kind') or {}
+    kind, kind_confidence = _choice(page_answer, page_q['page_kind']['criteria'])
     decisions = []
     batches = []
     current = []
@@ -77,12 +78,20 @@ def decide_groups(title, url, soup, structured, groups, predict=jev_connector.pr
                     'criteria': ROLE_OPTIONS} for g in batch}
         context = {'page': state, 'page_kind': kind,
                    'groups': [_model_group(g) for g in batch]}
-        answers = predict(context, questions).get('answers', {})
+        response = predict(context, questions)
+        answers = response.get('answers', {})
         for g in batch:
             role, confidence = _choice(answers.get(g['id']), ROLE_OPTIONS)
-            decisions.append({**_decision(role, confidence, [g['id']]), 'group_id': g['id'],
+            decisions.append({**_decision(role, confidence, [g['id']]),
+                              'model': response.get('model', 'Jev'),
+                              'probabilities': (answers.get(g['id']) or {}).get('probabilities', {}),
+                              'group_id': g['id'],
                               'heading': g['heading'], 'region': g['region'], 'shape': g['shape']})
-    return _decision(kind, kind_confidence, ['page:headings', 'page:text', 'jsonld'], 'Jev sobre DOM'), decisions
+    page_decision = _decision(kind, kind_confidence,
+                              ['page:headings', 'page:text', 'jsonld'], 'Jev sobre DOM')
+    page_decision['model'] = page_result.get('model', 'Jev')
+    page_decision['probabilities'] = page_answer.get('probabilities', {})
+    return page_decision, decisions
 
 
 def _select_roles(groups, decisions, roles):
