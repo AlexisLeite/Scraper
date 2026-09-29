@@ -1,7 +1,8 @@
 from fastapi.testclient import TestClient
 
-import server
-from extract import candidate_groups, clean_document, group_values
+from src.server import main as server
+from src.common import jev_extractor as analyzer, uri_to_html as browser
+from src.common.dom import candidate_groups, clean_document, group_values
 
 HTML = '''<html><head><title>Tienda</title><script type="application/ld+json">{"@type":"Product","name":"Uno"}</script>
 <script>secret()</script><style>.x{}</style></head><body><div data-studio-overlay><button>Aceptar</button></div>
@@ -57,7 +58,7 @@ def test_candidates_are_structural_and_exact_values():
 def test_decisions_abstain_and_keep_evidence():
     soup, structured = clean_document(HTML)
     groups = candidate_groups(soup, 'https://example.org/crema')
-    page, decisions = server.decide_groups('Tienda', 'https://example.org/crema', soup, structured, groups, fake_predict)
+    page, decisions = analyzer.decide_groups('Tienda', 'https://example.org/crema', soup, structured, groups, fake_predict)
     assert page['value'] == 'product' and page['model'] == 'Jev'
     assert any(d['value'] == 'other' for d in decisions)
     assert all(d['evidence_ids'] == [d['group_id']] for d in decisions)
@@ -97,7 +98,7 @@ def test_playwright_verifies_added_products():
     thread = Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        result = server.verify_action(f'http://127.0.0.1:{httpd.server_port}/',
+        result = browser.verify_action(f'http://127.0.0.1:{httpd.server_port}/',
                                       {'selector': '#more', 'text': 'More'}, primary_selector='#cards')
         assert result['effect'] == 'added_products'
         assert (result['before_products'], result['after_products']) == (2, 3)
@@ -112,4 +113,4 @@ def test_direct_anchor_cards_and_numeric_id_selectors():
     cards = next(g for g in groups if g['shape'] == 'repeated_siblings')
     assert cards['selector'].startswith('main > div')
     assert len(group_values(cards, soup, 'https://example.org/')['links']) == 2
-    assert server._choice({'choice': 'invalid', 'confidence': 1.0}, {'a': 'A', 'other': 'Otro'}) == ('other', None)
+    assert analyzer._choice({'choice': 'invalid', 'confidence': 1.0}, {'a': 'A', 'other': 'Otro'}) == ('other', None)

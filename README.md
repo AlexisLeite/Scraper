@@ -10,10 +10,18 @@ Requiere Python 3.11 o posterior. Crea un archivo `.env` en este directorio con 
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m playwright install chromium
-.venv/bin/python server.py
+.venv/bin/python -m src.server
 ```
 
 El servidor obtiene la IPv4 con `tailscale ip -4` y escucha solo en esa interfaz, puerto 8787. Abre `http://<IP-de-Tailscale>:8787` desde un equipo autorizado en la misma red. Si Tailscale no está disponible, el servidor no arranca. En Windows usa `.venv\\Scripts\\python.exe` en los comandos. Para la varita de esquemas, instala Codex CLI por separado y asegúrate de que `codex` esté en `PATH`.
+
+## Estructura
+
+- `src/app/`: interfaz web y recursos estáticos.
+- `src/server/`: API, trabajos de análisis y arranque en Tailscale.
+- `src/common/`: captura de URL, preparación del DOM, extracción con Jev, conector y esquemas.
+
+El código Python usa guiones bajos en los módulos (`jev_extractor.py`, `uri_to_html.py`) para que se puedan importar normalmente.
 
 ## Flujo
 

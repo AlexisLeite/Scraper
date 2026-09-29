@@ -6,7 +6,7 @@ Run with: .venv/bin/python tests/live_regression.py
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from server import inspect_url
+from src.common.jev_extractor import inspect_url
 
 CASES = [
     ('Vichy listado', 'https://www.vichy.es/todos-los-productos/cuidado-de-la-piel', 'listing'),

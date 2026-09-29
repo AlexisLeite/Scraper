@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
-ENV_FILE = Path(__file__).resolve().parent / ".env"
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 def api_key():
