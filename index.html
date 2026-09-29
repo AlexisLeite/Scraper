@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101922">
+  <title>Markup Studio · Jev</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Markup Studio">
+        <span class="brand-mark">M<span>↗</span></span>
+        <span><strong>MARKUP</strong><small>STUDIO / JEV</small></span>
+      </a>
+      <div class="sidebar-label">WORKSPACE</div>
+      <nav class="tabs" aria-label="Herramientas">
+        <button class="tab active" data-tab="web" type="button"><span class="tab-icon">⌘</span><span>Analizar sitio</span><span class="tab-index">01</span></button>
+        <button class="tab" data-tab="classify" type="button"><span class="tab-icon">▦</span><span>Clasificar contenido</span><span class="tab-index">02</span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="system-card">
+        <div class="system-title"><span class="pulse" id="status-dot"></span> ESTADO DEL SISTEMA</div>
+        
+        <div class="system-row"><span>Codex CLI</span><strong id="codex-status">Comprobando</strong></div>
+        
+        <div class="system-row"><span>Jev</span><strong id="jev-status">Comprobando</strong></div>
+      </div>
+      <div class="sidebar-foot">LOCAL FIRST <span>·</span> v1.0</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar"><div><span class="breadcrumb">WORKSPACE</span><span class="slash">/</span><span id="breadcrumb-current">ANALIZAR SITIO</span></div><span class="topbar-right">ANÁLISIS CON JEV <span class="tiny-dot"></span></span></header>
+
+      <section class="page active" id="page-web">
+        <div class="page-heading"><div class="eyebrow"><span class="eyebrow-line"></span> EXPLORACIÓN WEB</div><h1>Entiende lo que hay<br><em>detrás de una página.</em></h1><p>Renderiza una URL, limpia el HTML y encuentra productos, reseñas y rutas de navegación relevantes para tu objetivo.</p></div>
+        <div class="panel input-panel">
+          <div class="panel-head"><div><span class="step">01</span><h2>URL de la página</h2></div><span class="panel-hint">HTTP / HTTPS</span></div>
+          <form id="capture-form" class="url-form"><label class="sr-only" for="url-input">URL</label><span class="url-prefix">↗</span><input id="url-input" type="url" required placeholder="https://ejemplo.com/pagina" autocomplete="url"><button class="primary-button" type="submit"><span>Analizar página</span><span class="button-arrow">→</span></button></form>
+          <label class="objective-label" for="objective-input">OBJETIVO DE EXPLORACIÓN <span>OPCIONAL</span></label>
+          <input id="objective-input" class="objective-input" type="text" maxlength="1000" placeholder="Ej.: encontrar zapatillas de running para principiantes">
+          <div class="input-note">El objetivo sirve para ordenar categorías. La página se renderiza y se analiza completa antes de mostrar resultados.</div>
+        </div>
+        <div id="analysis-progress" class="progress-panel hidden" role="status" aria-live="polite"><div class="progress-top"><strong id="progress-message">Preparando análisis…</strong><span id="progress-percent">0%</span></div><div class="progress-track"><div id="progress-fill"></div></div><span id="progress-phase">Chromium · DOM · Jev</span></div>
+        <details id="manual-import" class="panel import-panel"><summary>¿La URL abre en tu navegador pero el análisis falla?</summary><p>Algunos sitios bloquean Chromium automatizado. Abre la página en tu navegador, pulsa F12 y ejecuta <code>copy(document.documentElement.outerHTML)</code> en la consola. Pega aquí el HTML copiado; se analizará con la URL y el objetivo indicados arriba.</p><textarea id="html-input" placeholder="Pega aquí el HTML renderizado de la página…" aria-label="HTML renderizado"></textarea><button id="import-html-button" class="secondary-button" type="button">Analizar HTML del navegador</button></details>
+        <div id="saved-results" class="saved-results panel hidden"><div class="panel-head"><div><span class="step">↺</span><h2>Análisis guardados</h2></div><span class="panel-hint">EN ESTE NAVEGADOR</span></div><div id="saved-results-list"></div></div>
+        <div id="capture-empty" class="empty-state"><span class="empty-glyph">⌁</span><h3>Tu análisis aparecerá aquí</h3><p>Introduce una URL pública para empezar a explorar el documento.</p></div>
+        <div id="capture-result" class="results hidden">
+          <div class="result-heading"><div><span class="overline">RESULTADO / JEV + DOM</span><h2 id="result-title">Página analizada</h2><a id="result-url" target="_blank" rel="noopener noreferrer"></a></div><div class="download-actions"><button id="download-clean-html" class="secondary-button" type="button">↓ HTML extraído</button><button id="download-html" class="secondary-button" type="button">↓ HTML original</button></div></div>
+          <div class="metrics"><div class="metric"><span>ELEMENTOS</span><strong id="stat-elements">—</strong></div><div class="metric"><span>GRUPOS CANDIDATOS</span><strong id="stat-main-blocks">—</strong></div><div class="metric"><span>GRUPOS IDENTIFICADOS</span><strong id="stat-other-blocks">—</strong></div><div class="metric"><span>CARACTERES DEL CONTENIDO</span><strong id="stat-content-chars">—</strong></div></div>
+          <p id="coverage-note" class="coverage-note"></p>
+          <div class="analysis-summary panel"><div><span class="overline">TIPO DE PÁGINA</span><h3 id="page-kind">—</h3><p id="page-kind-source"></p></div><div><span class="overline">SEÑALES DETECTADAS</span><p id="page-signals"></p></div></div>
+          <div class="insight-grid">
+            <div class="panel insight-card"><div class="panel-head"><div><span class="step">A</span><h2>Productos similares</h2></div></div><p class="insight-intro">Enlaces en secciones de relacionados o recomendados.</p><div id="related-links" class="link-list"></div></div>
+            <div class="panel insight-card"><div class="panel-head"><div><span class="step">B</span><h2>Reseñas</h2></div></div><p id="reviews-status" class="insight-intro"></p><div id="reviews-steps" class="step-list"></div><div id="reviews-links" class="link-list"></div></div>
+            <div class="panel insight-card"><div class="panel-head"><div><span class="step">C</span><h2>Categorías a recorrer</h2></div></div><p id="categories-intro" class="insight-intro"></p><div id="category-links" class="link-list"></div></div>
+            <div class="panel insight-card"><div class="panel-head"><div><span class="step">D</span><h2>Navegación del listado</h2></div></div><p id="pagination-intro" class="insight-intro"></p><div id="pagination-steps" class="step-list"></div><div id="product-links" class="link-list"></div></div>
+          </div>
+          <details class="vector-details"><summary>Ver decisiones y evidencias de Jev <span>Grupos, atributos y acciones</span></summary><pre id="analysis-json"></pre></details>
+          <div class="result-grid"><div class="panel preview-panel"><div class="panel-head"><div><span class="step">02</span><h2>Vista renderizada</h2></div><span class="panel-hint">CHROMIUM</span></div><img id="site-shot" alt="Captura de la página renderizada"></div><div class="panel summary-panel"><div class="panel-head"><div><span class="step">03</span><h2>Contenido detectado</h2></div><span class="panel-hint">DOM</span></div><div class="summary-label">ENCABEZADOS</div><ul id="headings-list"></ul><div class="summary-label">EXTRACTO DE TEXTO</div><p id="text-preview"></p></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-classify">
+        <div class="page-heading"><div class="eyebrow"><span class="eyebrow-line"></span> MOTOR DE DECISIONES</div><h1>Convierte contenido<br><em>en decisiones claras.</em></h1><p>Define tus preguntas y categorías, o descríbelas en lenguaje natural para crear un esquema con Codex.</p></div>
+        <div class="classify-grid"><div class="panel classify-panel"><div class="panel-head"><div><span class="step">01</span><h2>Contenido</h2></div><span class="panel-hint">TEXTO / REGISTRO</span></div><label class="sr-only" for="content-input">Contenido para clasificar</label><textarea id="content-input" placeholder="Pega aquí el correo, ticket, reseña o contenido que quieres clasificar…">Me cobraron dos veces este mes. Necesito un reembolso urgente, por favor.</textarea><div class="char-count"><span id="content-count">0</span> / 50 000 caracteres</div></div><div class="panel classify-panel"><div class="panel-head"><div><span class="step">02</span><h2>Esquema de clasificación</h2></div><button id="magic-button" class="magic-button" type="button">✦ Crear con Codex</button></div><div class="saved-schema-row"><select id="saved-schema-select" aria-label="Esquemas guardados"><option value="">Esquemas guardados…</option></select><button id="save-schema" class="secondary-button" type="button">Guardar esquema</button><button id="delete-schema" class="secondary-button" type="button" aria-label="Eliminar esquema seleccionado">×</button></div><label class="sr-only" for="schema-input">Esquema JSON</label><textarea id="schema-input" class="code-input" spellcheck="false"></textarea><div class="schema-foot"><span>Formato JSON compatible con Jev</span><button id="format-schema" type="button">Dar formato ↗</button></div></div></div>
+        
+        <button id="classify-button" class="primary-button classify-action" type="button"><span>Clasificar contenido</span><span class="button-arrow">→</span></button>
+        <div id="classify-result" class="results hidden"><div class="result-heading"><div><span class="overline">RESULTADO / JEV</span><h2>Decisiones del modelo</h2></div><span id="jev-model" class="model-tag"></span></div><div id="answer-cards" class="answer-cards"></div><details class="vector-details"><summary>Ver respuesta JSON <span>Detalle técnico</span></summary><pre id="classification-json"></pre></details></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="magic-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="magic-title"><div class="modal-backdrop" data-close-modal></div><div class="modal-card"><button class="modal-close" type="button" data-close-modal aria-label="Cerrar">×</button><div class="modal-symbol">✦</div><span class="overline">GENERADOR DE ESQUEMAS</span><h2 id="magic-title">Dile a Codex qué necesitas clasificar.</h2><p>Describe las categorías o preguntas. Codex CLI propondrá un JSON que podrás revisar y editar.</p><label class="sr-only" for="magic-instructions">Instrucciones para el esquema</label><textarea id="magic-instructions" placeholder="Por ejemplo: Clasifica tickets por departamento (facturación, soporte, ventas) y detecta si son urgentes."></textarea><div class="modal-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button id="generate-button" class="primary-button" type="button">✦ Generar esquema</button></div></div></div>
+</body>
+</html>
