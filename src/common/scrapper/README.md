@@ -1,6 +1,6 @@
 # Orquestador de scraping
 
-`Scrapper` recibe URI iniciales y visita cada una antes de decidir qué hacer con sus enlaces. Usa `ThreadPoolExecutor` para limitar el paralelismo. Los procesadores son inyectables; por defecto, Playwright produce `PageCapture` y Jev clasifica grupos del DOM como `WebPageEntities`.
+`Scrapper` recibe URI iniciales y visita cada una antes de decidir qué hacer con sus enlaces. Usa una cola BFS: completa un nivel antes de comenzar el siguiente y conserva el orden de descubrimiento aun si los trabajadores terminan en otro orden. Usa `ThreadPoolExecutor` para limitar el paralelismo. Los procesadores son inyectables; por defecto, Playwright produce `PageCapture` y Jev clasifica grupos del DOM como `WebPageEntities`.
 
 ```python
 from src.common.scrapper import Scrapper, ScrapperConfig
@@ -42,3 +42,9 @@ events = scrapper.audit.list_events(summary.run_id)
 ```
 
 `get_visit` reúne la decisión, cada intento, enlaces salientes y eventos. `read_html(visit_id, attempt=n)` recupera una captura anterior para estudiarla o reevaluarla más adelante. La clave de Jev no se guarda en el historial.
+
+## Interfaz web
+
+La pestaña **Recorrer sitio** permite indicar una URL inicial, un máximo de sitios y un máximo de saltos. Muestra el progreso y conserva los recorridos en el servidor. El historial enumera las páginas visitadas en orden de descubrimiento; cada página ofrece la captura de página completa, las entidades clasificadas por Jev, el HTML renderizado descargable y los enlaces descubiertos con la decisión de seguirlos o no. Los enlaces que no se visitaron también se consultan dentro de la página que los descubrió.
+
+La API usa `POST /api/scrapes` para iniciar el trabajo, `GET /api/scrapes/jobs/{job_id}` para consultar progreso, `GET /api/scrapes` para listar recorridos y `GET /api/scrapes/{run_id}` para obtener páginas y enlaces en orden de descubrimiento. `GET /api/scrapes/{run_id}/visits/{visit_id}` entrega el detalle; sus subrutas `/screenshot` y `/html` recuperan la evidencia archivada.

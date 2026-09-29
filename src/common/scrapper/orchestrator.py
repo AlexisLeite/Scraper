@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from collections import deque
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Iterable
+from typing import Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from .audit import DEFAULT_AUDIT_DIR, AuditStore
@@ -120,7 +120,8 @@ class Scrapper:
                                           screenshot_path=screenshot_path)
         return _Outcome(None, last_error)
 
-    def run(self, initial_uris: Iterable[str], on_content: ContentListener | None = None) -> RunSummary:
+    def run(self, initial_uris: Iterable[str], on_content: ContentListener | None = None,
+            on_progress: Callable[[dict], None] | None = None) -> RunSummary:
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError('Este orquestador ya está ejecutando un recorrido.')
         try:
@@ -136,6 +137,14 @@ class Scrapper:
                 'html_to_entities': _processor_name(self.html_to_entities),
             }
             run_id = self.audit.start_run(config_record)
+            def report(**counts):
+                if on_progress:
+                    try:
+                        on_progress({'run_id': run_id, **counts})
+                    except Exception:
+                        pass  # A UI listener must not interrupt the audited crawl.
+
+            report(scheduled=0, succeeded=0, failed=0, doubtful=0, content_events=0)
             queue: deque[_Queued] = deque()
             accepted: set[str] = set()
             seed_hosts = set()
@@ -179,20 +188,23 @@ class Scrapper:
             scheduled = succeeded = failed = doubtful = content_events = 0
             listeners = [*self._listeners, *([on_content] if on_content else [])]
             with ThreadPoolExecutor(max_workers=self.config.max_threads) as pool:
-                running: dict[Future[_Outcome], tuple[_Queued, str]] = {}
-                while queue or running:
-                    while queue and len(running) < self.config.max_threads:
-                        item = queue.popleft()
-                        visit_id = self.audit.start_visit(run_id, item.uri, item.canonical,
-                                                          item.depth, item.parent_visit_id,
-                                                          item.via_entity_id, item.edge_id)
-                        running[pool.submit(self._visit, visit_id, item.uri)] = (item, visit_id)
-                        scheduled += 1
-                    if not running:
-                        break
-                    finished, _ = wait(running, return_when=FIRST_COMPLETED)
-                    for future in finished:
-                        item, visit_id = running.pop(future)
+                # Drain one depth before dispatching the next. Futures may finish in any
+                # order; consuming them in discovery order makes the BFS history stable.
+                while queue:
+                    depth = queue[0].depth
+                    running: deque[tuple[_Queued, str, Future[_Outcome]]] = deque()
+                    while (queue and queue[0].depth == depth) or running:
+                        while (queue and queue[0].depth == depth and
+                               len(running) < self.config.max_threads):
+                            item = queue.popleft()
+                            visit_id = self.audit.start_visit(run_id, item.uri, item.canonical,
+                                                              item.depth, item.parent_visit_id,
+                                                              item.via_entity_id, item.edge_id)
+                            running.append((item, visit_id, pool.submit(self._visit, visit_id, item.uri)))
+                            scheduled += 1
+                            report(scheduled=scheduled, succeeded=succeeded, failed=failed,
+                                   doubtful=doubtful, content_events=content_events)
+                        item, visit_id, future = running.popleft()
                         try:
                             outcome = future.result()
                         except Exception as exc:
@@ -200,6 +212,8 @@ class Scrapper:
                         if outcome.entities is None:
                             failed += 1
                             self.audit.fail_visit(visit_id, outcome.error or 'Error desconocido')
+                            report(scheduled=scheduled, succeeded=succeeded, failed=failed,
+                                   doubtful=doubtful, content_events=content_events)
                             continue
                         result = outcome.entities
                         succeeded += 1
@@ -231,6 +245,8 @@ class Scrapper:
                                     if isinstance(target, str) and target:
                                         enqueue(target, item.depth + 1, visit_id,
                                                 entity.id, entity.confidence, block)
+                        report(scheduled=scheduled, succeeded=succeeded, failed=failed,
+                               doubtful=doubtful, content_events=content_events)
             summary = RunSummary(run_id, scheduled, succeeded, failed, doubtful,
                                  content_events, len(queue))
             self.audit.finish_run(summary)

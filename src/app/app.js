@@ -178,7 +178,8 @@ function busy(button, state, label) {
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab === button));
   document.querySelectorAll('.page').forEach((page) => page.classList.toggle('active', page.id === `page-${button.dataset.tab}`));
-  $('breadcrumb-current').textContent = button.dataset.tab === 'web' ? 'ANALIZAR SITIO' : 'CLASIFICAR CONTENIDO';
+  $('breadcrumb-current').textContent = ({web: 'ANALIZAR SITIO', classify: 'CLASIFICAR CONTENIDO',
+    scrape: 'RECORRER SITIO'})[button.dataset.tab];
 }));
 
 async function refreshHealth() {

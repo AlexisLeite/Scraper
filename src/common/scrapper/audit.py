@@ -197,18 +197,29 @@ class AuditStore:
 
     def list_visits(self, run_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute('''SELECT id,requested_uri,canonical_uri,final_uri,title,depth,
-                parent_visit_id,via_entity_id,status,doubtful,page_type,page_confidence,error,
-                html_path,screenshot_path,started_at,finished_at FROM visits
-                WHERE run_id=? ORDER BY started_at,id''', (run_id,)).fetchall()
+            rows = db.execute('''SELECT v.id,v.requested_uri,v.canonical_uri,v.final_uri,
+                v.title,v.depth,v.parent_visit_id,v.via_entity_id,v.status,v.doubtful,
+                v.page_type,v.page_confidence,v.error,v.html_path,v.screenshot_path,
+                v.started_at,v.finished_at,e.rowid AS discovery_order
+                FROM visits v LEFT JOIN edges e ON e.to_visit_id=v.id
+                WHERE v.run_id=? ORDER BY e.rowid''', (run_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    def list_runs(self, limit: int = 30) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute('''SELECT id,started_at,finished_at,config_json,summary_json
+                                 FROM runs ORDER BY started_at DESC LIMIT ?''',
+                              (max(1, min(limit, 100)),)).fetchall()
+        return [{**dict(row), 'config': json.loads(row['config_json']),
+                 'summary': json.loads(row['summary_json']) if row['summary_json'] else None}
+                for row in rows]
 
     def list_doubtful(self, run_id: str) -> list[dict[str, Any]]:
         return [row for row in self.list_visits(run_id) if row['doubtful']]
 
     def list_edges(self, run_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute('SELECT * FROM edges WHERE run_id=? ORDER BY created_at,id',
+            rows = db.execute('SELECT rowid AS discovery_order,* FROM edges WHERE run_id=? ORDER BY rowid',
                               (run_id,)).fetchall()
         return [dict(row) for row in rows]
 
@@ -225,7 +236,7 @@ class AuditStore:
                 return None
             attempts = db.execute('SELECT * FROM attempts WHERE visit_id=? ORDER BY number',
                                   (visit_id,)).fetchall()
-            edges = db.execute('SELECT * FROM edges WHERE from_visit_id=? ORDER BY created_at,id',
+            edges = db.execute('SELECT rowid AS discovery_order,* FROM edges WHERE from_visit_id=? ORDER BY rowid',
                                (visit_id,)).fetchall()
             events = db.execute('SELECT * FROM events WHERE visit_id=? ORDER BY created_at,id',
                                 (visit_id,)).fetchall()

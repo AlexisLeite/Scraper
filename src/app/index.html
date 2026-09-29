@@ -7,6 +7,7 @@
   <title>Markup Studio · Jev</title>
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
+  <script src="/scrape.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -19,6 +20,7 @@
       <nav class="tabs" aria-label="Herramientas">
         <button class="tab active" data-tab="web" type="button"><span class="tab-icon">⌘</span><span>Analizar sitio</span><span class="tab-index">01</span></button>
         <button class="tab" data-tab="classify" type="button"><span class="tab-icon">▦</span><span>Clasificar contenido</span><span class="tab-index">02</span></button>
+        <button class="tab" data-tab="scrape" type="button"><span class="tab-icon">↝</span><span>Recorrer sitio</span><span class="tab-index">03</span></button>
       </nav>
       <div class="sidebar-spacer"></div>
       <div class="system-card">
@@ -69,6 +71,25 @@
         
         <button id="classify-button" class="primary-button classify-action" type="button"><span>Clasificar contenido</span><span class="button-arrow">→</span></button>
         <div id="classify-result" class="results hidden"><div class="result-heading"><div><span class="overline">RESULTADO / JEV</span><h2>Decisiones del modelo</h2></div><span id="jev-model" class="model-tag"></span></div><div id="answer-cards" class="answer-cards"></div><details class="vector-details"><summary>Ver respuesta JSON <span>Detalle técnico</span></summary><pre id="classification-json"></pre></details></div>
+      </section>
+      <section class="page" id="page-scrape">
+        <div class="page-heading"><div class="eyebrow"><span class="eyebrow-line"></span> RECORRIDO / JEV</div><h1>Explora un sitio<br><em>paso a paso.</em></h1><p>Visita páginas por niveles y conserva cada captura completa, las extracciones de Jev y el camino por el que se descubrió.</p></div>
+        <div class="panel input-panel">
+          <div class="panel-head"><div><span class="step">01</span><h2>Iniciar recorrido</h2></div><span class="panel-hint">COLA POR NIVELES</span></div>
+          <form id="scrape-form" class="scrape-form"><label for="scrape-url">URL inicial</label><input id="scrape-url" type="url" required placeholder="https://ejemplo.com/catalogo" autocomplete="url"><label for="scrape-limit">Máximo de sitios visitados</label><input id="scrape-limit" type="number" min="1" max="100" value="10" required><label for="scrape-hops">Máximo de saltos</label><input id="scrape-hops" type="number" min="0" max="8" value="2" required><button class="primary-button" type="submit">Iniciar scraping <span class="button-arrow">→</span></button></form>
+          <p class="input-note">Las páginas dudosas se visitan y clasifican; sus enlaces se registran sin seguirlos automáticamente.</p>
+        </div>
+        <div id="scrape-progress" class="progress-panel hidden" role="status" aria-live="polite"><div class="progress-top"><strong id="scrape-progress-title">Recorriendo…</strong><span id="scrape-progress-count">0 / 0</span></div><div class="progress-track"><div id="scrape-progress-fill"></div></div><span id="scrape-progress-detail">Esperando la primera página</span></div>
+        <div class="panel scrape-history"><div class="panel-head"><div><span class="step">↺</span><h2>Historial de recorridos</h2></div><button id="scrape-refresh" class="secondary-button" type="button">Actualizar</button></div><div id="scrape-runs" class="scrape-runs"><p class="no-evidence">Cargando historial…</p></div></div>
+        <div id="scrape-explorer" class="results hidden">
+          <div class="result-heading"><div><span class="overline">HISTORIAL / ORDEN DE DESCUBRIMIENTO</span><h2 id="scrape-run-title">Recorrido</h2><p id="scrape-run-meta" class="coverage-note"></p></div></div>
+          <div class="scrape-explorer-grid"><aside class="panel scrape-timeline-panel"><div class="panel-head"><div><span class="step">02</span><h2>Páginas descubiertas</h2></div></div><div id="scrape-timeline" class="scrape-timeline"></div></aside>
+            <div id="scrape-detail" class="scrape-detail"><div class="panel scrape-detail-head"><div><span id="scrape-page-position" class="overline">PÁGINA</span><h2 id="scrape-page-title">—</h2><a id="scrape-page-url" target="_blank" rel="noopener noreferrer"></a><p id="scrape-page-meta"></p></div><div class="scrape-detail-actions"><button id="scrape-prev" class="secondary-button" type="button">← Anterior</button><button id="scrape-next" class="secondary-button" type="button">Siguiente →</button><a id="scrape-html-download" class="secondary-button" download="pagina-renderizada.html">↓ HTML</a></div></div>
+              <div class="panel scrape-shot-panel"><div class="panel-head"><div><span class="step">03</span><h2>Captura completa</h2></div><span class="panel-hint">PLAYWRIGHT</span></div><img id="scrape-shot" alt="Captura completa de la página visitada"><p id="scrape-no-shot" class="no-evidence hidden">No hay captura disponible para esta visita.</p></div>
+              <div class="panel scrape-entities-panel"><div class="panel-head"><div><span class="step">04</span><h2>Extracciones realizadas</h2></div><span class="panel-hint">JEV + DOM</span></div><div id="scrape-entities"></div><details class="vector-details"><summary>Resultado y evidencias completas</summary><pre id="scrape-result-json"></pre></details></div>
+              <div class="panel scrape-edges-panel"><div class="panel-head"><div><span class="step">05</span><h2>Enlaces descubiertos aquí</h2></div></div><div id="scrape-outgoing"></div></div>
+            </div></div>
+        </div>
       </section>
     </main>
   </div>

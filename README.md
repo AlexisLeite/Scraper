@@ -44,3 +44,5 @@ Para repetir las cinco comprobaciones públicas comparables de la estrategia (re
 ## Orquestador
 
 `src/common/scrapper/` contiene un recorrido concurrente y auditable de URI. Recibe procesadores intercambiables, emite eventos de contenido y conserva HTML completo, capturas, resultados, reintentos y decisiones de navegación en `data/scrapper/` (ignorado por Git). Las páginas dudosas se visitan y clasifican, pero no generan saltos automáticos. Consulta [su guía](src/common/scrapper/README.md) para configuración y acceso al historial.
+
+La tercera pestaña, **Recorrer sitio**, inicia un recorrido BFS con límite de páginas y saltos. Permite ver el progreso, abrir las páginas en orden de descubrimiento y revisar su captura completa, extracciones, enlaces y HTML descargable. El historial permanece en el servidor después de cerrar el navegador.

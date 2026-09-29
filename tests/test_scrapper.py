@@ -132,10 +132,34 @@ def test_parallel_workers_respect_limit_and_depth(tmp_path):
     assert sum(edge['disposition'] == 'max_hops' for edge in scraper.audit.list_edges(summary.run_id)) == 3
 
 
+def test_bfs_discovery_order_is_stable_when_workers_finish_out_of_order(tmp_path):
+    root = 'https://shop.test/'
+    a, b, a1, b1 = (root + suffix for suffix in ('a', 'b', 'a1', 'b1'))
+    pages = {root: result(root, next_uris=(a, b)),
+             a: result(a, next_uris=(a1,)), b: result(b, next_uris=(b1,)),
+             a1: result(a1), b1: result(b1)}
+    capture_order = []
+    def uneven_capture(uri):
+        capture_order.append(uri)
+        if uri == a:
+            time.sleep(0.08)
+        return capture(uri)
+    scraper = Scrapper(ScrapperConfig(max_threads=2, max_hops=2, max_sites=5,
+                                      max_retries=0, audit_dir=tmp_path,
+                                      uri_to_html=uneven_capture,
+                                      html_to_entities=lambda page: pages[page.final_uri]))
+    summary = scraper.run([root])
+    assert [visit['requested_uri'] for visit in scraper.audit.list_visits(summary.run_id)] == [
+        root, a, b, a1, b1]
+    assert capture_order == [root, a, b, a1, b1]
+    assert [edge['target_uri'] for edge in scraper.audit.list_edges(summary.run_id)] == [
+        root, a, b, a1, b1]
+
+
 def test_jev_html_processor_keeps_generic_entities_and_dom_values():
     html = '''<html><title>Tienda</title><body><main><h1>Cremas</h1>
     <nav><a href="/cremas">Cremas</a><a href="/serums">Sérums</a></nav>
-    <div id="cards"><a href="/one">Uno</a><a href="/two">Dos</a><a href="/three">Tres</a></div>
+    <div id="cards"><a href="/one">Uno</a><a href="/two">Dos</a></div>
     </main></body></html>'''
     def predict(state, questions):
         answers = {}
@@ -152,10 +176,11 @@ def test_jev_html_processor_keeps_generic_entities_and_dom_values():
     output = JevHtmlToWebPageEntities(predict=predict)(
         PageCapture('https://shop.test/', 'https://shop.test/', 'Tienda', html))
     assert output.page_type == 'listing'
+    assert sum(entity.role == 'primary_products' for entity in output.entities) == 1
     products = next(entity for entity in output.entities if entity.role == 'primary_products')
     assert products.is_content and products.is_navigation
     assert [link['url'] for link in products.links] == [
-        'https://shop.test/one', 'https://shop.test/two', 'https://shop.test/three']
+        'https://shop.test/one', 'https://shop.test/two']
     assert any(entity.role == 'categories' for entity in output.entities)
     assert canonical_uri('HTTPS://Shop.Test:443/a#part') == 'https://shop.test/a'
 

@@ -101,7 +101,7 @@ def _select_roles(groups, decisions, roles):
 
 def choose_primary_group(soup, url, title, groups, decisions, predict):
     candidates = [g for g in groups if g['region'] == 'main' and g['shape'] == 'repeated_siblings'
-                  and len(g['entries']) >= 3 and len(group_values(g, soup, url)['links']) >= 3]
+                  and len(g['entries']) >= 2 and len(group_values(g, soup, url)['links']) >= 2]
     if not candidates:
         return []
     winners = []
