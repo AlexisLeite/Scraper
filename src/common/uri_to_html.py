@@ -2,7 +2,7 @@
 import base64
 from urllib.parse import urlparse
 
-from .dom import clean_document, _entry
+from .dom import clean_document, group_values, _entry
 
 def _valid_url(url):
     parsed = urlparse(url)
@@ -55,13 +55,13 @@ def _items_at(soup, selector, url):
     return [(_entry(child.find('a', href=True) or child, url)['url'] or child.get_text(' ', strip=True)[:100]) for child in children]
 
 
-def verify_action(url, control, primary_selector=None, review_selector=None):
+def verify_action(url, control, primary_selector=None, review_selector=None, *, capture_evidence=False):
     """Replay one Jev-nominated control and compare collection state before/after."""
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            page = browser.new_page(service_workers='block')
+            page = browser.new_page(viewport={'width': 1440, 'height': 900}, service_workers='block')
             page.goto(url, wait_until='domcontentloaded', timeout=30000)
             try:
                 page.wait_for_load_state('networkidle', timeout=5000)
@@ -70,6 +70,11 @@ def verify_action(url, control, primary_selector=None, review_selector=None):
             page.wait_for_timeout(1000)
             _overlay_marker(page)
             page.evaluate("document.querySelectorAll('[data-studio-overlay]').forEach(el => el.remove())")
+            def snapshot():
+                return {'html': page.content(), 'url': page.url, 'title': page.title(),
+                        'screenshot_base64': base64.b64encode(page.screenshot(
+                            type='jpeg', quality=60, full_page=True)).decode('ascii')}
+            before_capture = snapshot() if capture_evidence else None
             before, _ = clean_document(page.content())
             old_url = page.url
             before_items = _items_at(before, primary_selector, url) if primary_selector else []
@@ -79,18 +84,33 @@ def verify_action(url, control, primary_selector=None, review_selector=None):
                 return {'effect': 'not_found', 'verification': 'Playwright', 'control': control}
             product_nodes = page.locator(primary_selector + ' > *').count() if primary_selector else 0
             review_nodes = page.locator(review_selector + ' > *').count() if review_selector else 0
+            carousel_selector = control.get('collection_selector') if control.get('predicted_role') == 'carousel' else None
+            def region_signature(selector):
+                if not selector:
+                    return None
+                return page.evaluate('''selector => {
+                    const node = document.querySelector(selector);
+                    if (!node) return null;
+                    return [...node.children].map(child => {
+                        const rect = child.getBoundingClientRect();
+                        return [child.textContent, rect.x, rect.y, child.getAttribute('aria-hidden'),
+                            getComputedStyle(child).transform];
+                    });
+                }''', selector)
+            before_carousel = region_signature(carousel_selector)
+            watched = {selector: page.locator(selector).first.inner_html()
+                       for selector in (primary_selector, review_selector, carousel_selector)
+                       if selector and page.locator(selector).count()}
             locator.click(timeout=8000)
             try:
-                page.wait_for_function('''({products, reviews, productCount, reviewCount, oldUrl}) =>
-                    (products && (document.querySelector(products)?.children.length || 0) !== productCount) ||
-                    (reviews && (document.querySelector(reviews)?.children.length || 0) !== reviewCount) ||
-                    location.href !== oldUrl''',
-                    arg={'products': primary_selector, 'reviews': review_selector,
-                         'productCount': product_nodes, 'reviewCount': review_nodes,
-                         'oldUrl': old_url}, timeout=9000)
+                page.wait_for_function('''({watched, oldUrl}) =>
+                    location.href !== oldUrl || Object.entries(watched).some(
+                        ([selector, html]) => document.querySelector(selector)?.innerHTML !== html)''',
+                    arg={'watched': watched, 'oldUrl': old_url}, timeout=9000)
             except Exception:
                 pass
             page.wait_for_timeout(500)
+            after_capture = snapshot() if capture_evidence else None
             after, _ = clean_document(page.content())
             after_items = _items_at(after, primary_selector, page.url) if primary_selector else []
             after_reviews = _items_at(after, review_selector, page.url) if review_selector else []
@@ -104,15 +124,24 @@ def verify_action(url, control, primary_selector=None, review_selector=None):
                 effect = 'replaced_reviews'
             elif page.url != old_url:
                 effect = 'changed_url'
-            elif before_items and after_items and before_items != after_items:
+            elif carousel_selector and before_carousel != region_signature(carousel_selector):
                 effect = 'moved_carousel'
             else:
                 effect = 'no_effect'
-            return {'effect': effect, 'verification': 'Playwright', 'control': control,
+            def exact_values(document, selector):
+                return group_values({'selector': selector, 'heading': ''}, document, page.url) if selector else None
+            result = {'effect': effect, 'verification': 'Playwright', 'control': control,
                     'before_products': len(before_items), 'after_products': len(after_items),
                     'before_reviews': len(before_reviews), 'after_reviews': len(after_reviews),
                     'before_review_nodes': review_nodes,
                     'after_review_nodes': page.locator(review_selector + ' > *').count() if review_selector else 0,
-                    'before_url': old_url, 'after_url': page.url}
+                    'before_url': old_url, 'after_url': page.url,
+                    'before_content': {'products': exact_values(before, primary_selector),
+                                       'reviews': exact_values(before, review_selector)},
+                    'after_content': {'products': exact_values(after, primary_selector),
+                                      'reviews': exact_values(after, review_selector)}}
+            if capture_evidence:
+                result['captures'] = {'before': before_capture, 'after': after_capture}
+            return result
         finally:
             browser.close()

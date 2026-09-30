@@ -219,6 +219,18 @@ def scrape_html(run_id: str, visit_id: str):
     return Response(html, media_type='text/html; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="pagina-renderizada.html"'})
 
+
+@app.get('/api/scrapes/{run_id}/visits/{visit_id}/actions/{index}/{phase}/{kind}')
+def scrape_action_artifact(run_id: str, visit_id: str, index: int, phase: str, kind: str):
+    _scrape_visit(run_id, visit_id)
+    if kind not in ('html', 'screenshot'):
+        raise HTTPException(404, 'Tipo de evidencia no encontrado.')
+    content = _audit_store.read_action_artifact(visit_id, index, phase, kind)
+    if content is None:
+        raise HTTPException(404, 'Evidencia de acción no encontrada.')
+    return Response(content, media_type='image/jpeg' if kind == 'screenshot' else 'text/html; charset=utf-8',
+                    headers={'Content-Disposition': 'attachment; filename="accion.html"'} if kind == 'html' else {})
+
 @app.post('/api/classify')
 async def classify_endpoint(request: ClassifyRequest):
     try:

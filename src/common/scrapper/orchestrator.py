@@ -114,9 +114,17 @@ class Scrapper:
                     entities = self.html_to_entities(capture)
                 if not isinstance(entities, WebPageEntities):
                     raise TypeError('html_to_entities debe devolver WebPageEntities.')
+                entities = self.audit.archive_actions(visit_id, number, entities)
                 self.audit.record_attempt(visit_id, number, phase, 'done', started,
                                           html_path=html_path, screenshot_path=screenshot_path)
                 return _Outcome(entities, None)
+            except jev_connector.UsageRecordingError as exc:
+                error = str(exc)
+                self.audit.mark_usage_incomplete(visit_id, error)
+                self.audit.record_attempt(visit_id, number, 'usage', 'error', started,
+                                          error=error, html_path=html_path,
+                                          screenshot_path=screenshot_path)
+                return _Outcome(None, error)
             except Exception as exc:
                 last_error = f'{type(exc).__name__}: {exc}'
                 self.audit.record_attempt(visit_id, number, phase, 'error', started,
@@ -245,7 +253,7 @@ class Scrapper:
                             if entity.is_navigation:
                                 block = ('doubtful_page' if page_doubtful else
                                          'doubtful_entity' if entity_doubtful else None)
-                                for link in entity.links:
+                                for link in entity.navigation_links if entity.navigation_links is not None else entity.links:
                                     target = link.get('url')
                                     if isinstance(target, str) and target:
                                         enqueue(target, item.depth + 1, visit_id,

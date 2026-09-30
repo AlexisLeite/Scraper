@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,6 +83,8 @@ class AuditStore:
                 );
                 CREATE INDEX IF NOT EXISTS model_calls_by_visit ON model_calls(visit_id, id);
             ''')
+            if 'usage_error' not in {row['name'] for row in db.execute('PRAGMA table_info(visits)')}:
+                db.execute('ALTER TABLE visits ADD COLUMN usage_error TEXT')
 
     @contextmanager
     def _connect(self):
@@ -138,8 +140,7 @@ class AuditStore:
                        (visit_id, 'scheduled', edge_id))
         return visit_id
 
-    def save_capture(self, visit_id: str, attempt: int, capture: PageCapture) -> tuple[str, str | None]:
-        stem = f'{visit_id}-{attempt}'
+    def _write_capture(self, stem: str, capture: PageCapture) -> tuple[str, str | None]:
         html_path = self.captures / f'{stem}.html.gz'
         temporary = self.captures / f'{stem}.{uuid.uuid4().hex}.tmp'
         try:
@@ -160,11 +161,35 @@ class AuditStore:
                 temporary.unlink(missing_ok=True)
             screenshot_path = str(image_path.relative_to(self.root))
         html_relative = str(html_path.relative_to(self.root))
+        return html_relative, screenshot_path
+
+    def save_capture(self, visit_id: str, attempt: int, capture: PageCapture) -> tuple[str, str | None]:
+        html_relative, screenshot_path = self._write_capture(f'{visit_id}-{attempt}', capture)
         with self._lock, self._connect() as db:
             db.execute('''UPDATE visits SET final_uri=?, title=?, html_path=?, screenshot_path=?
                           WHERE id=?''',
                        (capture.final_uri, capture.title, html_relative, screenshot_path, visit_id))
         return html_relative, screenshot_path
+
+    def archive_actions(self, visit_id: str, attempt: int, result: WebPageEntities) -> WebPageEntities:
+        actions = []
+        for index, action in enumerate(result.actions):
+            action = dict(action)
+            captures = action.pop('captures', {})
+            evidence = {}
+            for phase, capture in captures.items():
+                if phase not in ('before', 'after') or not capture:
+                    continue
+                page = PageCapture(capture['url'], capture['url'], capture['title'],
+                                   capture['html'], capture.get('screenshot_base64'))
+                html_path, screenshot_path = self._write_capture(
+                    f'{visit_id}-{attempt}-action-{index}-{phase}', page)
+                evidence[phase] = {'html_path': html_path, 'screenshot_path': screenshot_path,
+                                   'url': capture['url'], 'title': capture['title']}
+            if evidence:
+                action['evidence'] = evidence
+            actions.append(action)
+        return replace(result, actions=tuple(actions))
 
     def record_attempt(self, visit_id: str, number: int, phase: str, status: str,
                        started_at: str, error: str | None = None,
@@ -185,6 +210,10 @@ class AuditStore:
                 (visit_id, attempt, call['model'], call['status'], call['input_tokens'],
                  call['output_tokens'], call['request_bytes'], _now()))
 
+    def mark_usage_incomplete(self, visit_id: str, error: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute('UPDATE visits SET usage_error=? WHERE id=?', (error, visit_id))
+
     def _usage(self, db: sqlite3.Connection, run_id: str | None = None,
                visit_id: str | None = None) -> dict[str, Any]:
         if visit_id:
@@ -197,7 +226,14 @@ class AuditStore:
             COALESCE(SUM(request_bytes),0) AS request_bytes,
             COALESCE(SUM(CASE WHEN input_tokens IS NULL OR output_tokens IS NULL THEN 1 ELSE 0 END),0) AS unreported_calls
             FROM model_calls {where}''', (key,)).fetchone()
-        return {**dict(row), 'exact': row['unreported_calls'] == 0}
+        if visit_id:
+            errors = db.execute('SELECT COUNT(*) FROM visits WHERE id=? AND usage_error IS NOT NULL',
+                                (visit_id,)).fetchone()[0]
+        else:
+            errors = db.execute('SELECT COUNT(*) FROM visits WHERE run_id=? AND usage_error IS NOT NULL',
+                                (run_id,)).fetchone()[0]
+        return {**dict(row), 'recording_errors': errors,
+                'exact': row['unreported_calls'] == 0 and errors == 0}
 
     def complete_visit(self, visit_id: str, result: WebPageEntities, doubtful: bool) -> None:
         with self._lock, self._connect() as db:
@@ -315,3 +351,17 @@ class AuditStore:
         return {**dict(row), 'config': config,
                 'summary': json.loads(row['summary_json']) if row['summary_json'] else None,
                 'usage': usage}
+
+    def read_action_artifact(self, visit_id: str, index: int, phase: str, kind: str):
+        visit = self.get_visit(visit_id)
+        actions = (visit.get('result') or {}).get('actions', []) if visit else []
+        if index < 0 or index >= len(actions) or phase not in ('before', 'after'):
+            return None
+        evidence = actions[index].get('evidence', {}).get(phase, {})
+        path = evidence.get('html_path' if kind == 'html' else 'screenshot_path')
+        if not path:
+            return None
+        if kind == 'html':
+            with gzip.open(self.root / path, 'rt', encoding='utf-8') as handle:
+                return handle.read()
+        return (self.root / path).read_bytes()

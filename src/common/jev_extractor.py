@@ -141,6 +141,22 @@ def _specific_pairs(soup, pairs):
     return selected or pairs
 
 
+def reconcile_primary(decisions, primary):
+    """Keep the initial label as evidence, including when Jev declines a main group."""
+    chosen = primary[0][0]['id'] if primary else None
+    for decision in decisions:
+        if decision['value'] == 'primary_products' and decision['group_id'] != chosen:
+            decision['original_decision'] = dict(decision)
+            decision['value'] = 'other'
+            decision['confidence'] = None
+            decision['verification'] = ('Reemplazada por selección de colección principal' if chosen
+                                        else 'Jev no confirmó una colección principal')
+        elif decision['group_id'] == chosen:
+            decision['original_decision'] = dict(decision)
+            decision.update(primary[0][1])
+            decision['group_id'] = chosen
+
+
 def _links_for(soup, url, pairs):
     result, seen = [], set()
     for group, decision in _specific_pairs(soup, pairs):
@@ -172,6 +188,89 @@ def _review_decision(soup, url, groups, decisions, predict):
     return _decision(state, conf, ids, 'Jev sobre registros DOM'), _decision(mode, mode_conf, ids, 'Acción pendiente de verificar')
 
 
+def analyze_interactions(soup, url, page, groups, decisions, primary, predict,
+                         verify=verify_action, *, interactive=False, capture_evidence=False,
+                         min_confidence=0.65, max_actions=4):
+    """Jev nominates blocks and controls; Playwright reports their observed effects."""
+    state, mode = _review_decision(soup, url, groups, decisions, predict)
+    reviews = _select_roles(groups, decisions, {'reviews'})
+    review_roots = [soup.select_one(g['selector']) for g, _ in reviews]
+    record_candidates = []
+    if state['value'] == 'published':
+        for group in groups:
+            tag = soup.select_one(group['selector'])
+            if (tag is not None and group['shape'] == 'repeated_siblings' and
+                any(root is tag or root in tag.parents for root in review_roots if root is not None)):
+                record_candidates.append(group)
+    review_selector = None
+    records_decision = _decision('other', None, [], 'No hay lista de reseñas confirmada')
+    if record_candidates:
+        criteria = {g['id']: f"Grupo estructural {g['id']}" for g in record_candidates}
+        criteria['other'] = 'Ninguno contiene una lista de reseñas individuales.'
+        response = predict({'page_kind': page['value'],
+                            'groups': [_model_group(g) for g in record_candidates]},
+                           {'records': {'type': 'choice',
+                            'instructions': 'Elige el grupo cuyos hijos directos son reseñas individuales publicadas. Excluye estadísticas, filtros y botones. Abstente si no hay uno.',
+                            'criteria': criteria}})
+        choice, confidence = _choice(response.get('answers', {}).get('records'), criteria)
+        records_decision = _decision(choice, confidence, [choice] if choice != 'other' else [], 'Jev sobre registros DOM')
+        if choice != 'other' and confidence is not None and confidence >= min_confidence:
+            review_selector = next(g['selector'] for g in record_candidates if g['id'] == choice)
+    roles = {'pagination', 'reviews', 'secondary_products'}
+    candidates = {}
+    for group, decision in _select_roles(groups, decisions, roles):
+        values = group_values(group, soup, url)
+        items = values['controls'] + (values['links'] if decision['value'] == 'pagination' else [])
+        for item in items:
+            candidate = {**item, 'group_id': group['id'], 'group_role': decision['value'],
+                         'collection_selector': group['selector'], 'context': _model_group(group)}
+            # Prefer the containing block's context over a lone button candidate.
+            if item['selector'] not in candidates or group['shape'] != 'control':
+                candidates[item['selector']] = candidate
+    nominees = []
+    values = list(candidates.values())
+    criteria = {'advance_products': 'Agrega o reemplaza productos en la colección principal',
+                'load_reviews': 'Carga más reseñas individuales publicadas',
+                'carousel': 'Mueve un carrusel secundario',
+                'other': 'Ordenar, filtrar, otra acción o evidencia insuficiente'}
+    for start in range(0, len(values), 4):
+        batch = values[start:start + 4]
+        questions = {f'control_{i}': {'type': 'choice',
+                     'instructions': f'Clasifica la acción del control {i} con su grupo completo. Un texto Siguiente o un número no prueba paginación. Abstente si falta evidencia.',
+                     'criteria': criteria} for i in range(len(batch))}
+        response = predict({'page_kind': page['value'], 'controls': batch,
+                            'primary_group': _model_group(primary[0][0]) if primary else None,
+                            'review_state': state, 'review_mode': mode}, questions)
+        for i, control in enumerate(batch):
+            role, confidence = _choice(response.get('answers', {}).get(f'control_{i}'), criteria)
+            if confidence is None or confidence < min_confidence:
+                continue
+            if (role == 'carousel' or (role == 'advance_products' and primary) or
+                (role == 'load_reviews' and review_selector)):
+                nominees.append({**{k: v for k, v in control.items() if k != 'context'},
+                                 'predicted_role': role, 'confidence': confidence,
+                                 'evidence_ids': [control['group_id']], 'model': response.get('model', 'Jev')})
+    nominees.sort(key=lambda item: item['confidence'], reverse=True)
+    checks = []
+    for control in nominees[:max_actions]:
+        if not interactive:
+            checks.append({'effect': 'unverified', 'verification': 'HTML; interacción no disponible',
+                           'control': control})
+            continue
+        try:
+            kwargs = {'capture_evidence': True} if capture_evidence else {}
+            check = verify(url, control, primary[0][0]['selector'] if primary else None,
+                           review_selector, **kwargs)
+            checks.append(check)
+            if check['effect'] == 'loaded_reviews':
+                mode = {**mode, 'value': 'load_more', 'verification': 'Playwright: agregó reseñas'}
+        except Exception as exc:
+            checks.append({'effect': 'unverified', 'verification': 'Playwright',
+                           'control': control, 'reason': type(exc).__name__})
+    return {'state': state, 'mode': mode, 'records': records_decision,
+            'selector': review_selector}, checks
+
+
 def inspect_url(url, objective='', progress=None, captured=None, predict=jev_connector.predict, verify=verify_action):
     _valid_url(url)
     def update(phase, percent, message):
@@ -188,115 +287,19 @@ def inspect_url(url, objective='', progress=None, captured=None, predict=jev_con
     update('jev', 45, f'Jev: clasificando {len(groups)} grupos')
     page, decisions = decide_groups(title, final_url, soup, structured, groups, predict)
     primary = choose_primary_group(soup, final_url, title, groups, decisions, predict) if page['value'] == 'listing' else []
-    if primary:
-        chosen = primary[0][0]['id']
-        for decision in decisions:
-            if decision['value'] == 'primary_products' and decision['group_id'] != chosen:
-                decision['value'] = 'other'
-                decision['verification'] = 'Reemplazada por selección de colección principal'
-            elif decision['group_id'] == chosen:
-                decision.update(primary[0][1])
-                decision['group_id'] = chosen
+    if page['value'] == 'listing':
+        reconcile_primary(decisions, primary)
 
     categories = _select_roles(groups, decisions, {'categories', 'breadcrumb'})
     secondary = _select_roles(groups, decisions, {'secondary_products'})
     reviews = _select_roles(groups, decisions, {'reviews'})
-    review_state, review_mode = _review_decision(soup, final_url, groups, decisions, predict)
     attributes = [{'group_id': g['id'], 'heading': g['heading'], 'text': group_values(g, soup, final_url)['text'],
                    'confidence': d['confidence']} for g, d in _select_roles(groups, decisions, {'attributes'})]
     update('actions', 75, 'Comprobando acciones con Playwright')
-    possible_controls = []
-    role_pairs = _select_roles(groups, decisions, {'pagination', 'reviews'})
-    for group in groups:
-        if group['shape'] != 'control':
-            continue
-        tag = soup.select_one(group['selector'])
-        if tag is None:
-            continue
-        ancestors = [(len(list(parent.parents)), decision['value']) for parent_group, decision in role_pairs
-                     if (parent := soup.select_one(parent_group['selector'])) is not None and parent in tag.parents]
-        own = next((d['value'] for d in decisions if d['group_id'] == group['id']), None)
-        parent_role = max(ancestors)[1] if ancestors else None
-        if own not in ('pagination', 'reviews') and parent_role not in ('pagination', 'reviews'):
-            continue
-        for item in group_values(group, soup, final_url)['controls']:
-            possible_controls.append({'group_id': group['id'], 'group_role': own if own in ('pagination', 'reviews') else parent_role,
-                                      'heading': group['heading'], 'region': group['region'], **item})
-    seen_control_selectors = {item['selector'] for item in possible_controls}
-    for group, _ in _select_roles(groups, decisions, {'pagination'}):
-        for item in group_values(group, soup, final_url)['links'][:20]:
-            if item['selector'] not in seen_control_selectors:
-                possible_controls.append({'group_id': group['id'], 'group_role': 'pagination',
-                                          'heading': group['heading'], 'region': group['region'], **item})
-                seen_control_selectors.add(item['selector'])
-    controls = []
-    for item in possible_controls:
-        question = {'control_role': {'type': 'choice',
-                    'instructions': 'Clasifica la acción probable de este único control. Selecciona otro si no hay evidencia; filtros y ordenar no cargan más registros.',
-                    'criteria': {'advance_products': 'Agrega o reemplaza productos en la colección principal',
-                                 'load_reviews': 'Agrega más reseñas individuales a la lista actual',
-                                 'carousel': 'Mueve un carrusel secundario',
-                                 'other': 'Filtro, orden, otra acción o evidencia insuficiente'}}}
-        answer = predict({'page_kind': page['value'], 'control': item,
-                          'review_mode': review_mode, 'main_group': primary[0][0]['id'] if primary else None},
-                         question).get('answers', {}).get('control_role')
-        role, confidence = _choice(answer, question['control_role']['criteria'])
-        if ((page['value'] == 'product' and role == 'load_reviews') or
-            (page['value'] == 'listing' and primary and role == 'advance_products')):
-            controls.append({**item, 'predicted_role': role, 'confidence': confidence})
-    if len(controls) > 1:
-        winners = []
-        for start in range(0, len(controls), 9):
-            batch = controls[start:start+9]
-            criteria = {f'c{i}': f"Control {i}: {item['text']} (grupo {item['group_id']})" for i, item in enumerate(batch)}
-            criteria['other'] = 'Ninguno tiene evidencia suficiente.'
-            answer = predict({'page_kind': page['value'], 'controls': batch,
-                              'task': 'Elegir una sola acción que agregue elementos a la colección actual sin filtrar, ordenar ni mover un carrusel.'},
-                             {'best_control': {'type': 'choice', 'instructions': 'Elige el control que probablemente agregue registros nuevos a la colección; abstente si no hay uno claro.',
-                                               'criteria': criteria}}).get('answers', {}).get('best_control')
-            choice, _ = _choice(answer, criteria)
-            if choice != 'other':
-                winners.append(batch[int(choice[1:])])
-        controls = winners
-        if len(controls) > 1:
-            criteria = {f'c{i}': f"{item['text']} ({item['group_id']})" for i, item in enumerate(controls)}
-            criteria['other'] = 'Ninguno.'
-            answer = predict({'controls': controls, 'page_kind': page['value']},
-                             {'best_control': {'type': 'choice', 'instructions': 'Selecciona solo el control que agregue elementos nuevos, sin filtrar ni ordenar.',
-                                               'criteria': criteria}}).get('answers', {}).get('best_control')
-            choice, _ = _choice(answer, criteria)
-            controls = [controls[int(choice[1:])]] if choice != 'other' else []
-    checks = []
-    review_candidates = []
-    for group, _ in reviews:
-        tag = soup.select_one(group['selector'])
-        if tag is None or group['shape'] != 'repeated_siblings':
-            continue
-        children = tag.find_all(True, recursive=False)
-        if len(children) >= 3:
-            review_candidates.append(group)
-    review_selector = None
-    if review_candidates:
-        batch = review_candidates[:9]
-        criteria = {g['id']: f"Grupo {g['id']} con {len(soup.select_one(g['selector']).find_all(True, recursive=False))} registros" for g in batch}
-        criteria['other'] = 'Ninguno contiene registros individuales.'
-        answer = predict({'groups': batch, 'task': 'Encontrar la lista de reseñas individuales, no estadísticas ni filtros.'},
-                         {'records': {'type': 'choice', 'instructions': 'Elige el grupo cuyos hijos directos son reseñas individuales publicadas.',
-                                      'criteria': criteria}}).get('answers', {}).get('records')
-        choice, _ = _choice(answer, criteria)
-        if choice != 'other':
-            review_selector = next(g['selector'] for g in batch if g['id'] == choice)
-    if captured is None:
-        for control in controls[:4]:
-            try:
-                checks.append(verify(final_url, control,
-                                     primary[0][0]['selector'] if primary else None,
-                                     review_selector))
-            except Exception as exc:
-                checks.append({'effect': 'unverified', 'verification': 'Playwright', 'control': control,
-                               'reason': type(exc).__name__})
-    elif controls:
-        checks = [{'effect': 'unverified', 'verification': 'HTML importado; interacción no disponible', 'control': x} for x in controls[:4]]
+    review_analysis, checks = analyze_interactions(
+        soup, final_url, page, groups, decisions, primary, predict, verify,
+        interactive=captured is None)
+    review_state, review_mode = review_analysis['state'], review_analysis['mode']
     product_links = _links_for(soup, final_url, primary)
     category_links = _links_for(soup, final_url, categories)
     related_links = _links_for(soup, final_url, secondary)

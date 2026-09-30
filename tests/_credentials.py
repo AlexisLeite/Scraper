@@ -6,6 +6,7 @@ TEST_ENV = Path(__file__).resolve().parents[1] / '.env.test'
 
 
 def activate_test_key(required=False):
+    os.environ['TYPESAFE_TEST_MODE'] = '1'
     key = os.environ.get('TYPESAFE_TEST_API_KEY', '').strip()
     if not key and TEST_ENV.exists():
         for line in TEST_ENV.read_text(encoding='utf-8').splitlines():
@@ -15,5 +16,5 @@ def activate_test_key(required=False):
     if not key and required:
         raise RuntimeError('Configura TYPESAFE_TEST_API_KEY o .env.test para las pruebas con Jev.')
     if key:
-        os.environ['TYPESAFE_API_KEY'] = key
+        os.environ['TYPESAFE_TEST_API_KEY'] = key
     return bool(key)

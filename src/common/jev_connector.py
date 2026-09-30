@@ -17,6 +17,10 @@ _usage_recorder: ContextVar[Callable[[dict], None] | None] = ContextVar('jev_usa
 _log = logging.getLogger(__name__)
 
 
+class UsageRecordingError(RuntimeError):
+    """The provider answered but its usage could not be saved; do not rebill by retrying."""
+
+
 @contextmanager
 def record_usage(callback: Callable[[dict], None]):
     """Attach a recorder to Jev calls in this worker, without sharing it across pages."""
@@ -28,6 +32,8 @@ def record_usage(callback: Callable[[dict], None]):
 
 
 def api_key():
+    if os.environ.get('TYPESAFE_TEST_MODE') == '1':
+        return os.environ.get('TYPESAFE_TEST_API_KEY', '').strip()
     key = os.environ.get("TYPESAFE_API_KEY")
     if key:
         return key.strip()
@@ -75,5 +81,5 @@ def predict(state, questions, model="jev-latest", *, opener=urlopen):
                           'input_tokens': token_count('input_tokens'),
                           'output_tokens': token_count('output_tokens'),
                           'request_bytes': len(body), 'status': status})
-            except Exception:
-                _log.exception('No se pudo registrar el uso de Jev')
+            except Exception as exc:
+                raise UsageRecordingError('No se pudo guardar el consumo de Jev; medición incompleta.') from exc

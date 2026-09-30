@@ -45,7 +45,7 @@
     const input = Number(usage.input_tokens || 0).toLocaleString('es');
     const output = Number(usage.output_tokens || 0).toLocaleString('es');
     const qualifier = usage.exact ? '' : ' al menos';
-    return `Jev: ${usage.calls} llamadas ·${qualifier} ${input} tokens de entrada · ${output} de salida${usage.unreported_calls ? ` · ${usage.unreported_calls} llamadas sin cifra` : ''}`;
+    return `Jev: ${usage.calls} llamadas registradas ·${qualifier} ${input} tokens de entrada · ${output} de salida${usage.unreported_calls ? ` · ${usage.unreported_calls} llamadas sin cifra` : ''}${usage.recording_errors ? ' · Medición incompleta: falló el registro' : ''}`;
   }
   function statusText(status) {
     return ({done: 'Analizada', error: 'Falló', running: 'En curso'})[status] || status;
@@ -138,11 +138,42 @@
     const result = detail.result;
     if (!result) {
       target.append(node('p', 'no-evidence', detail.status === 'running' ? 'La página se está analizando.' : 'No hay extracciones; consulta el error y los intentos en el resultado completo.'));
-      el('scrape-result-json').textContent = JSON.stringify({attempts: detail.attempts, error: detail.error}, null, 2);
+      el('scrape-result-json').textContent = JSON.stringify({attempts: detail.attempts,
+        model_calls: detail.model_calls, usage: detail.usage, error: detail.error}, null, 2);
       return;
     }
     const entities = result.entities || [];
     const identified = entities.filter((item) => item.role !== 'other');
+    if (result.reviews?.state) {
+      const labels = {published: 'Reseñas publicadas', empty_widget: 'Widget sin reseñas publicadas', unknown: 'Reseñas: evidencia insuficiente'};
+      target.append(node('p', 'coverage-note', `${labels[result.reviews.state.value] || result.reviews.state.value} · ${confidence(result.reviews.state.confidence)} · modo ${result.reviews.mode?.value || 'unknown'}`));
+    }
+    const effects = {added_products: 'Agregó productos', replaced_products: 'Reemplazó productos',
+      loaded_reviews: 'Cargó reseñas', replaced_reviews: 'Reemplazó reseñas', moved_carousel: 'Movió un carrusel',
+      changed_url: 'Cambió la URL', no_effect: 'Sin efecto observado', unverified: 'Sin verificar', not_found: 'Control no encontrado'};
+    (result.actions || []).forEach((action, index) => {
+      const card = node('article', 'scrape-entity');
+      card.append(node('strong', '', `${action.control?.text || action.control?.selector || 'Control'}: ${effects[action.effect] || action.effect}`),
+        node('p', '', `${action.verification} · productos ${action.before_products ?? '?'} → ${action.after_products ?? '?'} · reseñas ${action.before_reviews ?? '?'} → ${action.after_reviews ?? '?'}`));
+      ['before', 'after'].forEach((phase) => {
+        const evidence = action.evidence?.[phase];
+        if (!evidence) return;
+        const row = node('div', 'scrape-entity-links');
+        const base = `/api/scrapes/${currentRun.run.id}/visits/${detail.id}/actions/${index}/${phase}`;
+        const label = phase === 'before' ? 'Antes' : 'Después';
+        if (evidence.screenshot_path) {
+          const shot = node('a', '', `${label}: captura completa`);
+          shot.href = `${base}/screenshot`; shot.target = '_blank'; shot.rel = 'noopener'; row.append(shot);
+        }
+        const html = node('a', '', `${label}: descargar HTML`); html.href = `${base}/html`; row.append(html); card.append(row);
+      });
+      const text = [action.after_content?.products?.text, action.after_content?.reviews?.text].filter(Boolean).join('\n\n');
+      if (text) {
+        const content = node('details', 'scrape-entity-text');
+        content.append(node('summary', '', 'Contenido exacto después de la acción'), node('pre', '', text)); card.append(content);
+      }
+      target.append(card);
+    });
     target.append(node('p', 'coverage-note', `${identified.length} grupos identificados · ${entities.length - identified.length} con evidencia insuficiente · modelo ${result.model || 'Jev'}`));
     identified.forEach((entity) => {
       const card = node('article', 'scrape-entity');

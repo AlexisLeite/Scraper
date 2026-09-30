@@ -14,12 +14,13 @@ def result(uri):
 
 
 def test_connector_records_provider_usage_without_changing_response(monkeypatch):
-    monkeypatch.setenv('TYPESAFE_API_KEY', 'test-only-value')
+    monkeypatch.setenv('TYPESAFE_TEST_API_KEY', 'test-only-value')
     calls = []
     response = {'model': 'jev-test', 'answers': {'kind': {'type': 'noul', 'noul': 0.8}},
                 'usage': {'input_tokens': 123, 'output_tokens': 7}}
     def opener(request, timeout):
-        assert request.get_header('Authorization') == 'Bearer test-only-value'
+        matches = request.get_header('Authorization') == 'Bearer test-only-value'
+        assert matches
         return io.BytesIO(json.dumps(response).encode())
     with jev_connector.record_usage(calls.append):
         output = jev_connector.predict('hello', {'kind': {'type': 'noul'}}, opener=opener)
@@ -30,7 +31,7 @@ def test_connector_records_provider_usage_without_changing_response(monkeypatch)
 
 
 def test_scraper_usage_is_durable_per_visit_and_aggregated(tmp_path, monkeypatch):
-    monkeypatch.setenv('TYPESAFE_API_KEY', 'test-only-value')
+    monkeypatch.setenv('TYPESAFE_TEST_API_KEY', 'test-only-value')
     pages = ['https://shop.test/one', 'https://shop.test/two']
     barrier = threading.Barrier(2)
     def capture(uri):
@@ -59,7 +60,7 @@ def test_scraper_usage_is_durable_per_visit_and_aggregated(tmp_path, monkeypatch
 
 
 def test_missing_provider_usage_is_explicitly_partial(tmp_path, monkeypatch):
-    monkeypatch.setenv('TYPESAFE_API_KEY', 'test-only-value')
+    monkeypatch.setenv('TYPESAFE_TEST_API_KEY', 'test-only-value')
     uri = 'https://shop.test/'
     def classify(page):
         response = {'model': 'jev-test', 'answers': {'kind': {'type': 'noul', 'noul': 0.8}}}
@@ -86,3 +87,46 @@ def test_cli_test_credential_overrides_server_credential(tmp_path, monkeypatch):
     monkeypatch.setenv('TYPESAFE_API_KEY', 'server-value')
     assert activate_test_key()
     assert jev_connector.api_key() == 'separate-test-value'
+    assert __import__('os').environ['TYPESAFE_API_KEY'] == 'server-value'
+
+
+def test_missing_test_key_never_falls_back_to_server(tmp_path, monkeypatch):
+    import _credentials
+    monkeypatch.setattr(_credentials, 'TEST_ENV', tmp_path / 'missing')
+    monkeypatch.delenv('TYPESAFE_TEST_API_KEY', raising=False)
+    monkeypatch.setenv('TYPESAFE_API_KEY', 'server-fixture')
+    env = tmp_path / '.env'
+    env.write_text('TYPESAFE_API_KEY=server-file-fixture\n')
+    monkeypatch.setattr(jev_connector, 'ENV_FILE', env)
+    assert not _credentials.activate_test_key()
+    assert not jev_connector.configured()
+    import pytest
+    with pytest.raises(RuntimeError, match='falta TYPESAFE_API_KEY'):
+        jev_connector.predict('fixture', {'ok': {'type': 'noul'}},
+                              opener=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('No HTTP allowed')))
+
+
+def test_failed_usage_write_marks_incomplete_and_never_retries_paid_call(tmp_path, monkeypatch):
+    monkeypatch.setenv('TYPESAFE_TEST_API_KEY', 'test-only-value')
+    calls = []
+    def classify(page):
+        response = {'model': 'fixture', 'answers': {}, 'usage': {'input_tokens': 100, 'output_tokens': 10}}
+        def opener(*args, **kwargs):
+            calls.append(1)
+            return io.BytesIO(json.dumps(response).encode())
+        jev_connector.predict('fixture', {'ok': {'type': 'noul'}}, opener=opener)
+        return result(page.final_uri)
+    scraper = Scrapper(ScrapperConfig(max_sites=1, max_hops=0, max_retries=2,
+                                      audit_dir=tmp_path,
+                                      uri_to_html=lambda uri: PageCapture(uri, uri, 'Fixture', '<main/>'),
+                                      html_to_entities=classify))
+    def fail_write(*args, **kwargs):
+        raise RuntimeError('Simulated write failure')
+    monkeypatch.setattr(scraper.audit, 'record_model_call', fail_write)
+    summary = scraper.run(['https://fixture.test/'])
+    assert summary.failed == 1 and summary.succeeded == 0 and len(calls) == 1
+    run = scraper.audit.get_run(summary.run_id)
+    assert not run['usage']['exact'] and run['usage']['recording_errors'] == 1
+    visit = scraper.audit.get_visit(scraper.audit.list_visits(summary.run_id)[0]['id'])
+    assert visit['usage_error'] and not visit['usage']['exact']
+    assert len(visit['attempts']) == 1 and visit['attempts'][0]['phase'] == 'usage'

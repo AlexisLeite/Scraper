@@ -12,6 +12,7 @@ class PageCapture:
     title: str
     html: str
     screenshot_base64: str | None = None
+    interactive: bool = False
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class WebPageEntity:
     controls: tuple[dict[str, Any], ...] = ()
     attributes: dict[str, Any] = field(default_factory=dict)
     verification: str = 'Jev sobre DOM'
+    navigation_links: tuple[dict[str, Any], ...] | None = None
 
     @property
     def is_navigation(self) -> bool:
@@ -48,6 +50,8 @@ class WebPageEntities:
     entities: tuple[WebPageEntity, ...]
     jsonld: tuple[dict[str, Any], ...] = ()
     decisions: tuple[dict[str, Any], ...] = ()
+    reviews: dict[str, Any] = field(default_factory=dict)
+    actions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
