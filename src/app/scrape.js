@@ -40,6 +40,13 @@
   function confidence(value) {
     return typeof value === 'number' ? `${Math.round(value * 100)}%` : 'sin confianza';
   }
+  function tokenUsage(usage) {
+    if (!usage) return 'Uso de Jev: sin registro en este recorrido anterior';
+    const input = Number(usage.input_tokens || 0).toLocaleString('es');
+    const output = Number(usage.output_tokens || 0).toLocaleString('es');
+    const qualifier = usage.exact ? '' : ' al menos';
+    return `Jev: ${usage.calls} llamadas ·${qualifier} ${input} tokens de entrada · ${output} de salida${usage.unreported_calls ? ` · ${usage.unreported_calls} llamadas sin cifra` : ''}`;
+  }
   function statusText(status) {
     return ({done: 'Analizada', error: 'Falló', running: 'En curso'})[status] || status;
   }
@@ -60,7 +67,7 @@
         const root = run.config?.initial_uris?.[0] || run.id;
         const summary = run.summary;
         button.append(node('strong', '', root),
-          node('small', '', `${new Date(run.started_at).toLocaleString('es')} · ${summary ? `${summary.succeeded}/${summary.scheduled} páginas analizadas` : 'Recorrido en curso o interrumpido'} · límite ${run.config?.max_sites ?? '?'}`));
+          node('small', '', `${new Date(run.started_at).toLocaleString('es')} · ${summary ? `${summary.succeeded}/${summary.scheduled} páginas analizadas` : 'Recorrido en curso o interrumpido'} · límite ${run.config?.max_sites ?? '?'} · ${tokenUsage(run.usage)}`));
         button.addEventListener('click', () => openRun(run.id));
         target.append(button);
       });
@@ -78,6 +85,7 @@
     el('scrape-explorer').classList.remove('hidden');
     el('scrape-run-title').textContent = run.config?.initial_uris?.[0] || 'Recorrido';
     el('scrape-run-meta').textContent = `${visits.length} páginas visitadas · límite ${run.config?.max_sites ?? '?'} · ${run.finished_at ? 'Finalizado' : 'En curso o interrumpido'} · cola por niveles`;
+    el('scrape-run-usage').textContent = tokenUsage(run.usage);
     const timeline = el('scrape-timeline'); timeline.replaceChildren();
     visits.forEach((visit, index) => {
       const item = node('button', 'scrape-visit'); item.type = 'button';
@@ -113,7 +121,7 @@
     el('scrape-page-title').textContent = detail.title || detail.requested_uri;
     const url = el('scrape-page-url'); url.textContent = detail.final_uri || detail.requested_uri;
     url.href = detail.final_uri || detail.requested_uri;
-    el('scrape-page-meta').textContent = `Salto ${detail.depth} · ${statusText(detail.status)} · ${detail.page_type || 'Tipo desconocido'} · confianza ${confidence(detail.page_confidence)}${detail.doubtful ? ' · Página dudosa: no se siguieron sus enlaces' : ''}${detail.error ? ` · ${detail.error}` : ''}`;
+    el('scrape-page-meta').textContent = `Salto ${detail.depth} · ${statusText(detail.status)} · ${detail.page_type || 'Tipo desconocido'} · confianza ${confidence(detail.page_confidence)}${detail.doubtful ? ' · Página dudosa: no se siguieron sus enlaces' : ''}${detail.error ? ` · ${detail.error}` : ''}\n${tokenUsage(detail.usage)}`;
     const shot = el('scrape-shot');
     shot.classList.toggle('hidden', !detail.screenshot_path);
     el('scrape-no-shot').classList.toggle('hidden', !!detail.screenshot_path);
@@ -159,7 +167,8 @@
       target.append(card);
     });
     if (!identified.length) target.append(node('p', 'no-evidence', 'Jev no identificó grupos de interés con evidencia suficiente.'));
-    el('scrape-result-json').textContent = JSON.stringify({result, attempts: detail.attempts, events: detail.events}, null, 2);
+    el('scrape-result-json').textContent = JSON.stringify({result, attempts: detail.attempts,
+      model_calls: detail.model_calls, events: detail.events}, null, 2);
   }
 
   function renderEdges(detail) {

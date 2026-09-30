@@ -53,12 +53,15 @@ def test_scrape_api_persists_discovery_capture_and_jev_results(tmp_path, monkeyp
     assert job['summary']['succeeded'] == 2
     assert client.get('/api/scrapes').json()[0]['id'] == run_id
     run = client.get(f'/api/scrapes/{run_id}').json()
+    assert run['run']['usage']['calls'] == 0
+    assert run['run']['usage']['exact']
     visits = run['visits']
     assert [visit['requested_uri'] for visit in visits] == [root, child]
     assert visits[0]['discovery_order'] < visits[1]['discovery_order']
     assert [edge['target_uri'] for edge in run['edges']] == [root, child]
     visit_id = visits[0]['id']
     detail = client.get(f'/api/scrapes/{run_id}/visits/{visit_id}').json()
+    assert detail['usage']['calls'] == 0
     assert detail['result']['model'] == 'Jev'
     assert detail['result']['entities'][0]['role'] == 'attributes'
     assert client.get(f'/api/scrapes/{run_id}/visits/{visit_id}/screenshot').content == b'jpeg-bytes'

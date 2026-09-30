@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
+from .. import jev_connector
 from .audit import DEFAULT_AUDIT_DIR, AuditStore
 from .models import (ContentEvent, ContentListener, HtmlToWebPageEntities, PageCapture,
                      RunSummary, UriToHtml, WebPageEntities)
@@ -107,7 +108,10 @@ class Scrapper:
                     raise TypeError('uri_to_html debe devolver PageCapture.')
                 html_path, screenshot_path = self.audit.save_capture(visit_id, number, capture)
                 phase = 'entities'
-                entities = self.html_to_entities(capture)
+                with jev_connector.record_usage(
+                    lambda call: self.audit.record_model_call(visit_id, number, call)
+                ):
+                    entities = self.html_to_entities(capture)
                 if not isinstance(entities, WebPageEntities):
                     raise TypeError('html_to_entities debe devolver WebPageEntities.')
                 self.audit.record_attempt(visit_id, number, phase, 'done', started,
@@ -133,6 +137,7 @@ class Scrapper:
                 'min_page_confidence': self.config.min_page_confidence,
                 'min_entity_confidence': self.config.min_entity_confidence,
                 'same_host_only': self.config.same_host_only,
+                'usage_tracking': True,
                 'uri_to_html': _processor_name(self.uri_to_html),
                 'html_to_entities': _processor_name(self.html_to_entities),
             }

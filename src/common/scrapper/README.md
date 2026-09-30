@@ -43,6 +43,8 @@ events = scrapper.audit.list_events(summary.run_id)
 
 `get_visit` reúne la decisión, cada intento, enlaces salientes y eventos. `read_html(visit_id, attempt=n)` recupera una captura anterior para estudiarla o reevaluarla más adelante. La clave de Jev no se guarda en el historial.
 
+Los recorridos nuevos también guardan cada llamada de Jev en `model_calls`, con modelo, intento, cantidad de bytes enviados y `usage.input_tokens`/`usage.output_tokens` informados por la API. `get_run`, `list_runs` y `get_visit` agregan `usage` con total de llamadas, tokens y `unreported_calls`; `exact=false` señala que alguna llamada no informó uso. Los recorridos previos tienen `usage=null`. No se guardan prompts ni credenciales en esta tabla.
+
 ## Interfaz web
 
 La pestaña **Recorrer sitio** permite indicar una URL inicial, un máximo de sitios y un máximo de saltos. Muestra el progreso y conserva los recorridos en el servidor. El historial enumera las páginas visitadas en orden de descubrimiento; cada página ofrece la captura de página completa, las entidades clasificadas por Jev, el HTML renderizado descargable y los enlaces descubiertos con la decisión de seguirlos o no. Los enlaces que no se visitaron también se consultan dentro de la página que los descubrió.

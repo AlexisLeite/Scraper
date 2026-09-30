@@ -74,6 +74,14 @@ class AuditStore:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS events_by_run ON events(run_id, created_at);
+                CREATE TABLE IF NOT EXISTS model_calls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    visit_id TEXT NOT NULL REFERENCES visits(id), attempt INTEGER NOT NULL,
+                    model TEXT NOT NULL, status TEXT NOT NULL,
+                    input_tokens INTEGER, output_tokens INTEGER,
+                    request_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS model_calls_by_visit ON model_calls(visit_id, id);
             ''')
 
     @contextmanager
@@ -168,6 +176,29 @@ class AuditStore:
                 (visit_id, number, phase, status, error, html_path, screenshot_path,
                  started_at, _now()))
 
+    def record_model_call(self, visit_id: str, attempt: int, call: dict[str, Any]) -> None:
+        """Save provider-reported token counts; never store prompts or credentials."""
+        with self._lock, self._connect() as db:
+            db.execute('''INSERT INTO model_calls
+                (visit_id,attempt,model,status,input_tokens,output_tokens,request_bytes,created_at)
+                VALUES(?,?,?,?,?,?,?,?)''',
+                (visit_id, attempt, call['model'], call['status'], call['input_tokens'],
+                 call['output_tokens'], call['request_bytes'], _now()))
+
+    def _usage(self, db: sqlite3.Connection, run_id: str | None = None,
+               visit_id: str | None = None) -> dict[str, Any]:
+        if visit_id:
+            where, key = 'WHERE visit_id=?', visit_id
+        else:
+            where, key = 'WHERE visit_id IN (SELECT id FROM visits WHERE run_id=?)', run_id
+        row = db.execute(f'''SELECT COUNT(*) AS calls,
+            COALESCE(SUM(input_tokens),0) AS input_tokens,
+            COALESCE(SUM(output_tokens),0) AS output_tokens,
+            COALESCE(SUM(request_bytes),0) AS request_bytes,
+            COALESCE(SUM(CASE WHEN input_tokens IS NULL OR output_tokens IS NULL THEN 1 ELSE 0 END),0) AS unreported_calls
+            FROM model_calls {where}''', (key,)).fetchone()
+        return {**dict(row), 'exact': row['unreported_calls'] == 0}
+
     def complete_visit(self, visit_id: str, result: WebPageEntities, doubtful: bool) -> None:
         with self._lock, self._connect() as db:
             db.execute('''UPDATE visits SET status='done', doubtful=?, page_type=?,
@@ -210,9 +241,10 @@ class AuditStore:
             rows = db.execute('''SELECT id,started_at,finished_at,config_json,summary_json
                                  FROM runs ORDER BY started_at DESC LIMIT ?''',
                               (max(1, min(limit, 100)),)).fetchall()
-        return [{**dict(row), 'config': json.loads(row['config_json']),
-                 'summary': json.loads(row['summary_json']) if row['summary_json'] else None}
-                for row in rows]
+            return [{**dict(row), 'config': (config := json.loads(row['config_json'])),
+                     'summary': json.loads(row['summary_json']) if row['summary_json'] else None,
+                     'usage': self._usage(db, run_id=row['id']) if config.get('usage_tracking') else None}
+                    for row in rows]
 
     def list_doubtful(self, run_id: str) -> list[dict[str, Any]]:
         return [row for row in self.list_visits(run_id) if row['doubtful']]
@@ -240,10 +272,19 @@ class AuditStore:
                                (visit_id,)).fetchall()
             events = db.execute('SELECT * FROM events WHERE visit_id=? ORDER BY created_at,id',
                                 (visit_id,)).fetchall()
+            model_calls = db.execute('SELECT * FROM model_calls WHERE visit_id=? ORDER BY id',
+                                     (visit_id,)).fetchall()
+            run = db.execute('SELECT config_json FROM runs WHERE id=?', (row['run_id'],)).fetchone()
         return {**dict(row), 'result': json.loads(row['result_json']) if row['result_json'] else None,
                 'attempts': [dict(item) for item in attempts],
                 'outgoing_edges': [dict(item) for item in edges],
-                'events': [dict(item) for item in events]}
+                'events': [dict(item) for item in events],
+                'model_calls': [dict(item) for item in model_calls],
+                'usage': self._usage_for_visit(visit_id) if run and json.loads(run['config_json']).get('usage_tracking') else None}
+
+    def _usage_for_visit(self, visit_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            return self._usage(db, visit_id=visit_id)
 
     def read_html(self, visit_id: str, attempt: int | None = None) -> str | None:
         visit = self.get_visit(visit_id)
@@ -267,6 +308,10 @@ class AuditStore:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
-        return ({**dict(row), 'config': json.loads(row['config_json']),
-                 'summary': json.loads(row['summary_json']) if row['summary_json'] else None}
-                if row else None)
+            if row is None:
+                return None
+            config = json.loads(row['config_json'])
+            usage = self._usage(db, run_id=run_id) if config.get('usage_tracking') else None
+        return {**dict(row), 'config': config,
+                'summary': json.loads(row['summary_json']) if row['summary_json'] else None,
+                'usage': usage}

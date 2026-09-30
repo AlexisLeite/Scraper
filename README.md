@@ -6,6 +6,8 @@ Aplicación local para analizar páginas comerciales con Jev. Playwright renderi
 
 Requiere Python 3.11 o posterior. Crea un archivo `.env` en este directorio con `TYPESAFE_API_KEY=...`; está excluido de Git. Si la clave ya existe, no hace falta modificarla.
 
+Las pruebas por línea de comandos usan una credencial separada: define `TYPESAFE_TEST_API_KEY` en el entorno o crea `.env.test` con `TYPESAFE_API_KEY=...`. `.env.test` también está ignorado por Git. `pytest` la selecciona automáticamente cuando existe y `tests/live_regression.py` la exige. El servidor web conserva su configuración normal (`TYPESAFE_API_KEY` del entorno o `.env`) y no lee `.env.test`.
+
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
@@ -46,3 +48,5 @@ Para repetir las cinco comprobaciones públicas comparables de la estrategia (re
 `src/common/scrapper/` contiene un recorrido concurrente y auditable de URI. Recibe procesadores intercambiables, emite eventos de contenido y conserva HTML completo, capturas, resultados, reintentos y decisiones de navegación en `data/scrapper/` (ignorado por Git). Las páginas dudosas se visitan y clasifican, pero no generan saltos automáticos. Consulta [su guía](src/common/scrapper/README.md) para configuración y acceso al historial.
 
 La tercera pestaña, **Recorrer sitio**, inicia un recorrido BFS con límite de páginas y saltos. Permite ver el progreso, abrir las páginas en orden de descubrimiento y revisar su captura completa, extracciones, enlaces y HTML descargable. El historial permanece en el servidor después de cerrar el navegador.
+
+Cada llamada de Jev durante un recorrido nuevo guarda los tokens de entrada y salida informados por la API, por página y en el total del recorrido. El historial muestra las llamadas sin cifra como uso parcial. Los recorridos anteriores a esta función aparecen sin datos de tokens; no se les asigna una estimación como si fuera consumo real.

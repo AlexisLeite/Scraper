@@ -6,6 +6,7 @@ Run with: .venv/bin/python tests/live_regression.py
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _credentials import activate_test_key
 from src.common.jev_extractor import inspect_url
 
 CASES = [
@@ -17,6 +18,7 @@ CASES = [
 ]
 
 if __name__ == '__main__':
+    activate_test_key(required=True)
     for name, url, expected_kind in CASES:
         result = inspect_url(url)
         kind = result['classification']['value']
