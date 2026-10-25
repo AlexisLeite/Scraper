@@ -1,0 +1,9 @@
+[Unit]
+Description=Check extraction progress and quality for seed %i
+After=postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/repos/scrapper
+ExecStart=/repos/scrapper/.venv/bin/python -m src.persistent.monitor --seed %i
+TimeoutStartSec=120

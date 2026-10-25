@@ -1,7 +1,10 @@
+from tests.legacy.config import ScrapperConfig as LegacyConfig
+from tests.legacy.processors import JevHtmlToWebPageEntities
 from fastapi.testclient import TestClient
 
 from src.server import main as server
-from src.common import jev_extractor as analyzer, uri_to_html as browser
+from tests.legacy import jev_extractor as analyzer
+from src.common import uri_to_html as browser
 from src.common.dom import candidate_groups, clean_document, group_values
 
 HTML = '''<html><head><title>Tienda</title><script type="application/ld+json">{"@type":"Product","name":"Uno"}</script>
@@ -18,6 +21,8 @@ def fake_predict(state, questions):
         criteria = question.get('criteria', {})
         if key == 'page_kind':
             value = 'product'
+        elif key == 'primary_group' or (key.startswith('f') and key[1:].isdigit()):
+            value = 'other'
         elif key == 'state':
             value = 'empty_widget'
         elif key == 'mode':
@@ -65,15 +70,11 @@ def test_decisions_abstain_and_keep_evidence():
 
 
 def test_import_analysis_and_api(monkeypatch):
-    monkeypatch.setattr(server.jev_connector, 'predict', fake_predict)
     client = TestClient(server.app)
-    assert client.get('/').status_code == 200
-    assert client.get('/api/health').json()['jev']['configured']
-    response = client.post('/api/classify', json={'content': 'Hola', 'schema': {'questions': {
-        'tema': {'type': 'choice', 'instructions': 'Clasifica', 'criteria': {'a': 'A', 'b': 'B'}}}}})
-    assert response.status_code == 200
-    assert client.post('/api/classify', json={'content': 'Hola', 'schema': {'questions': {}}}).status_code == 400
-    result = server.inspect_url('https://example.org/crema', captured=(HTML, '', 'https://example.org/crema', ''),
+    assert client.get('/api/health').json()['extractors']==['semantic']
+    assert client.post('/api/classify',json={}).status_code==410
+    assert client.post('/api/analyze',json={}).status_code==410
+    result = analyzer.inspect_url('https://example.org/crema', captured=(HTML, '', 'https://example.org/crema', ''),
                                 predict=fake_predict)
     assert result['classification']['value'] == 'product'
     assert result['analysis']['reviews']['state']['value'] == 'empty_widget'
@@ -114,3 +115,34 @@ def test_direct_anchor_cards_and_numeric_id_selectors():
     assert cards['selector'].startswith('main > div')
     assert len(group_values(cards, soup, 'https://example.org/')['links']) == 2
     assert analyzer._choice({'choice': 'invalid', 'confidence': 1.0}, {'a': 'A', 'other': 'Otro'}) == ('other', None)
+
+
+def test_history_clean_dom_preserves_original_capture(monkeypatch, tmp_path):
+    from src.common.scrapper import Scrapper, ScrapperConfig, PageCapture, AuditStore
+    store = AuditStore(tmp_path)
+    scraper = Scrapper(LegacyConfig(max_sites=1, max_hops=0,
+        uri_to_html=lambda uri: PageCapture(uri,uri,'Fixture',HTML),
+        html_to_entities=JevHtmlToWebPageEntities(predict=fake_predict)), audit=store)
+    summary = scraper.run(['https://example.org/crema'])
+    visit = store.list_visits(summary.run_id)[0]
+    monkeypatch.setattr(server,'_audit_store',store)
+    client = TestClient(server.app)
+    base=f"/api/scrapes/{summary.run_id}/visits/{visit['id']}/html"
+    original=client.get(base);clean=client.get(base+'?clean=true')
+    assert original.status_code == clean.status_code == 200
+    assert 'secret()' in original.text and 'secret()' not in clean.text
+    assert 'Aceptar' not in clean.text and 'Agua y glicerina' in clean.text
+    assert store.read_html(visit['id']) == HTML
+
+
+def test_portal_serves_next_build_or_explicit_build_instructions():
+    client = TestClient(server.app)
+    response = client.get('/')
+    if (server.FRONTEND_ROOT / 'index.html').is_file():
+        assert response.status_code == 200
+        assert '/_next/' in response.text
+        assert '/scrape.js' not in response.text
+    else:
+        assert response.status_code == 503
+        assert 'npm run build' in response.json()['detail']
+    assert client.get('/commercial.js').status_code==404

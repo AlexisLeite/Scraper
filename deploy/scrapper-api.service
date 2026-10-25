@@ -1,0 +1,13 @@
+[Unit]
+Description=Scrapper portal API
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/repos/scrapper
+ExecStart=/repos/scrapper/.venv/bin/python -m src.server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,44 +1,63 @@
-# Extracción guiada por modelos: pruebas del 29 de septiembre de 2026
+# Extractor semántico
 
-## Muestra y resultados
+La aplicación utiliza un único extractor: `SemanticMetadataStrategy`.
+Las decisiones se apoyan en HTML, DOM, regiones de navegación, jerarquía,
+repetición y vocabularios estándar. Las URL, nombres de clases, textos y rutas
+específicos de sitios solo pueden aparecer en fixtures y pruebas de regresión.
 
-Se capturaron con Chrome renderizado las fichas y listados de Vichy y NIVEA indicados por el usuario. Sibari Calming Cream se usó como quinto sitio de control. Los HTML y resultados completos quedaron en capturas temporales de la investigación original; no se incorporan capturas grandes al repositorio. Las etiquetas esperadas se revisaron manualmente contra el DOM y las acciones del navegador.
+## Captura y estados
 
-| Decisión | Casos | Jev | Modelo anterior, 8192 tokens |
-|---|---:|---:|---:|
-| Papel de grupos de navegación y controles | 8 | 8 | 2 |
-| Tipo principal de página | 4 | 4 | 3 |
-| Estado y recorrido de reseñas | 4 | 4 | 1 |
-| Papel de grupos repetidos en listados | 7 | 7 | 1 |
-| Papel de bloques de atributos de producto | 8 | 8 | 5 |
+La captura inicial es inmutable. Antes de finalizar se observan controles de
+navegación declarados en cabeceras, menús y regiones de navegación. El hover no
+hace clic ni sigue enlaces. Se bloquean navegaciones del documento durante la
+observación. Los overlays visuales marcados por la captura se ocultan
+provisionalmente; no se aceptan cookies ni se ejecutan botones de consentimiento.
 
-Estos son ensayos pequeños y los esquemas se ajustaron durante el estudio; las cifras no estiman precisión en sitios nuevos. En Sibari, Jev identificó la ficha y dos menús: tipos de producto y problemas de piel. Un grupo de líneas de marca quedó ambiguo (confianza 0,56), por lo que el sistema debe admitir abstención.
+Los estados con cambios conservan su HTML anterior y posterior y captura visual.
+Cada intento registra control, resultado, enlaces agregados/retirados y error.
+Los límites de tiempo y cantidad son explícitos. La ausencia de cambios o de
+actividad de red no prueba cobertura completa de navegación ni paginación.
+La cobertura distingue entrada estática, controles invisibles, fallos y límites.
+Las expansiones de colecciones permanecen separadas de las observaciones de
+menús. Descubrir destinos no autoriza una visita ni consume su cupo.
 
-La clasificación forzada «elige el carrusel secundario» produjo un falso positivo de Jev en el listado Vichy. Clasificar cada grupo como una función concreta u «otro» corrigió el problema en los siete grupos ensayados. Las preguntas de relevancia `noul` del modelo anterior dieron 0,994–0,999 a todas las categorías; Jev priorizó PIGMENTACIÓN (0,79) y SIGNOS DE ENVEJECIMIENTO (0,83) para manchas y arrugas, y Desmaquillantes (0,87) para agua micelar.
+## Registros y navegación
 
-## Cobertura y acciones verificadas
+Los tipos schema.org, microdatos y RDFa se interpretan según su vocabulario.
+`ItemList` conserva sus miembros y sus referencias, incluso cuando no declaran
+`Product`. Las URL de los miembros permiten asociar estructuralmente sus
+encabezados, imágenes y textos al contenedor del DOM. Las tarjetas repetidas de
+una colección pueden emitirse como elementos de listado sin afirmar una clase
+comercial. Los valores sin marcado estándar viajan a Jev en muestras del DOM con
+identificadores explícitos. Cada muestra lleva juntas todas sus preguntas sobre
+tipo de bloque y campos; los valores de salida solo pueden referir a candidatos
+de esa misma muestra. Cada decisión permite `other`, conserva confianza y selector,
+y las omisiones y límites quedan registrados. No hay selectores, clases, textos
+ni rutas específicos de tiendas en producción.
 
-- El extractor anterior separó el texto principal, pero no preservó todas las secciones de reseñas ni toda la navegación. No debe ser la única representación para descubrir rutas o metadatos.
-- En la ficha Vichy, ocho `<details>` cerrados dejaron solo 281 caracteres de texto útil tras el extractor anterior. Al abrirlos en una copia del DOM antes de procesar, quedaron 2549 caracteres, incluidos beneficios, ingredientes y aplicación.
-- Vichy muestra un widget de reseñas con cero registros; NIVEA tiene 266 valoraciones y tres reseñas cargadas inicialmente. El modelo debe separar «existe widget» de «existen reseñas publicadas».
-- Las acciones se verificaron en Chrome: «Más productos» Vichy aumentó las tarjetas de 12 a 16; «Cargar más» NIVEA aumentó reseñas de 3 a 13; «Mostrar más reseñas» Sibari aumentó de 6 a 11. Las tres acciones actualizan el DOM sin cambiar de URL. Un control no debe declararse navegable hasta comprobar su efecto.
-- El listado NIVEA tiene diez tarjetas principales y carruseles secundarios con productos repetidos. La elección del grupo principal evita indexar duplicados como si fueran nuevos resultados.
+Las imágenes se leen del DOM original: `aria-hidden` no implica invisibilidad
+visual. El precio actual, el anterior, el precio por unidad y el envío no se
+confunden por reglas de posición. Jev asigna significado; el código conserva el
+valor elegido y combina probabilidades solo para alias del mismo importe exacto.
+La clase de página se deduce en una etapa posterior del resumen de bloques ya
+reconocidos. Se registra cada consumo, también en errores; un consumo ausente
+produce un gasto parcial. Una falla del modelo conserva el contenido estructural
+y muestra que quedaron campos sin interpretar.
 
-## Estrategia propuesta
+Los controles y listas de navegación permiten construir grupos con nombre,
+ruta de ancestros y enlaces hijos. Un botón sin `href` puede ser un grupo; no se
+inventa una URL para ese botón. El DOM completo sigue siendo evidencia aunque
+algunos paneles estén cerrados. Visibilidad, estado observado y tipo declarado
+se registran por separado.
 
-1. **Capturar y conservar evidencia.** Renderizar la página, retirar scripts, estilos y capas que tapan el contenido, y guardar DOM semántico, URL final, título, encabezados, destinos de enlaces, atributos útiles y JSON-LD. Los atributos y rutas solo generan candidatos; no les asignan significado final.
-2. **Revelar contenido acotadamente.** Abrir `<details>` en una copia. Detectar controles colapsados en la región principal, activarlos uno por uno con un límite, y guardar el cambio de DOM. Evitar recorrer menús globales o disparar compras durante esta etapa.
-3. **Construir un mapa de bloques.** Enumerar grupos de hermanos repetidos, paneles, barras de enlaces y controles con IDs estables; incluir encabezado, región, texto de todos los elementos, URLs y contexto cercano. El DOM limpio es la representación base; ningún resumen de texto elimina bloques del mapa.
-4. **Decidir jerárquicamente con Jev.** Primero `product/listing/other`; luego clasificar **cada** grupo completo (`primary_products`, `secondary_products`, `categories`, `breadcrumb`, `pagination`, `site_menu`, `reviews`, `other`). En fichas, clasificar bloques (`benefits`, `ingredients`, `usage`, `reviews`, etc.). Extraer los valores exactos del DOM original una vez elegidos los bloques. JSON-LD aporta valores alternativos y evidencia con procedencia, nunca una sustitución silenciosa de lo visible.
-5. **Descubrir y comprobar el recorrido.** Tras elegir una grilla, derivar y validar un selector contra sus elementos hermanos. Tras elegir una acción de cargar más, ejecutarla y exigir nuevos IDs/URLs o más registros. Si no cambia el DOM, registrar fallo o incertidumbre. Los carruseles se distinguen de paginación y no entran automáticamente a la cola del listado.
-6. **Aplicar el objetivo después.** Puntuar solo categorías confirmadas y productos extraídos para decidir qué recorrer o indexar. Mantener una cola de URL o acciones, canonización conservadora, huellas de estados visitados, deduplicación de productos y límites de profundidad/acciones.
+## Presentación y auditoría
 
-Cada resultado debería incluir `valor`, `evidence_ids`, `model`, `confidence` y `verification`. La confianza no sustituye la verificación del DOM. En la investigación original Jev fue más útil que el modelo anterior; el conector usa exclusivamente el `.env` de este repositorio.
+El portal presenta elementos de listados, contenido, categorías, enlaces y
+metadatos. Cada fuente incluye JSON legible y su selector; los miembros asociados
+al DOM conservan también el fragmento de HTML. Los límites y omisiones son visibles.
+La exploración de menús permite consultar evidencia anterior y posterior.
 
-## Límite de la copia
-
-Esta copia no incluye las URL exactas de los cinco casos ni sus HTML de referencia. Las observaciones anteriores son una línea de base histórica, no expectativas verificables contra capturas que no están en el repositorio.
-
-## Comprobación actual en páginas públicas comparables
-
-Las URL exactas de la muestra original no estaban en esta copia. `tests/live_regression.py` contiene cinco URL públicas comparables usadas para comprobar el flujo actual. En la ficha de agua micelar de Vichy, Jev distinguió un widget vacío; en la ficha de NIVEA identificó reseñas publicadas y Playwright verificó «Cargar más» 3→13 sin cambio de URL. En el listado general de Vichy, Playwright verificó «Más productos» 12→36 en la página actual; la observación anterior 12→16 queda como resultado histórico de otra muestra. En Sibari, «Mostrar más reseñas» pasó de 6 a 11 nodos de reseña (5→10 en la copia limpia, que excluye un nodo oculto). En el listado actual de cuidado facial de NIVEA, el grupo principal tuvo diez tarjetas en el navegador y nueve URL únicas extraíbles; Jev separó los grupos secundarios. Estas cifras son observaciones de páginas vivas, no supuestos para el código.
+`/api/extract` impone una visita y cero saltos en el servidor. La extracción es
+independiente de la cola persistente y no incorpora destinos a esa cola.
+La API solo admite el extractor semántico. Los extractores anteriores están fuera
+de `src` y se conservan únicamente como fixtures de pruebas históricas.

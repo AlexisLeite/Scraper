@@ -1,8 +1,9 @@
+from tests.legacy.config import ScrapperConfig as LegacyConfig
 import io
 import json
 import threading
 
-from src.common import jev_connector
+from tests.legacy import jev_connector
 from src.common.scrapper import (AuditStore, PageCapture, Scrapper, ScrapperConfig,
                                  WebPageEntities, WebPageEntity)
 
@@ -44,7 +45,7 @@ def test_scraper_usage_is_durable_per_visit_and_aggregated(tmp_path, monkeypatch
         jev_connector.predict(page.final_uri, {'kind': {'type': 'noul'}},
                               opener=lambda _request, timeout: io.BytesIO(json.dumps(response).encode()))
         return result(page.final_uri)
-    scraper = Scrapper(ScrapperConfig(max_threads=2, max_hops=0, max_sites=2,
+    scraper = Scrapper(LegacyConfig(max_threads=2, max_hops=0, max_sites=2,
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=capture, html_to_entities=classify))
     summary = scraper.run(pages)
@@ -67,7 +68,7 @@ def test_missing_provider_usage_is_explicitly_partial(tmp_path, monkeypatch):
         jev_connector.predict(uri, {'kind': {'type': 'noul'}},
                               opener=lambda _request, timeout: io.BytesIO(json.dumps(response).encode()))
         return result(uri)
-    scraper = Scrapper(ScrapperConfig(max_threads=1, max_hops=0, max_sites=1,
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_hops=0, max_sites=1,
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=lambda value: PageCapture(value, value, value, '<html/>'),
                                       html_to_entities=classify))
@@ -78,8 +79,8 @@ def test_missing_provider_usage_is_explicitly_partial(tmp_path, monkeypatch):
 
 
 def test_cli_test_credential_overrides_server_credential(tmp_path, monkeypatch):
-    from _credentials import activate_test_key
-    import _credentials
+    from tests._credentials import activate_test_key
+    from tests import _credentials
     private = tmp_path / '.env.test'
     private.write_text('TYPESAFE_API_KEY=separate-test-value\n')
     monkeypatch.setattr(_credentials, 'TEST_ENV', private)
@@ -91,7 +92,7 @@ def test_cli_test_credential_overrides_server_credential(tmp_path, monkeypatch):
 
 
 def test_missing_test_key_never_falls_back_to_server(tmp_path, monkeypatch):
-    import _credentials
+    from tests import _credentials
     monkeypatch.setattr(_credentials, 'TEST_ENV', tmp_path / 'missing')
     monkeypatch.delenv('TYPESAFE_TEST_API_KEY', raising=False)
     monkeypatch.setenv('TYPESAFE_API_KEY', 'server-fixture')
@@ -116,7 +117,7 @@ def test_failed_usage_write_marks_incomplete_and_never_retries_paid_call(tmp_pat
             return io.BytesIO(json.dumps(response).encode())
         jev_connector.predict('fixture', {'ok': {'type': 'noul'}}, opener=opener)
         return result(page.final_uri)
-    scraper = Scrapper(ScrapperConfig(max_sites=1, max_hops=0, max_retries=2,
+    scraper = Scrapper(LegacyConfig(max_sites=1, max_hops=0, max_retries=2,
                                       audit_dir=tmp_path,
                                       uri_to_html=lambda uri: PageCapture(uri, uri, 'Fixture', '<main/>'),
                                       html_to_entities=classify))

@@ -1,10 +1,12 @@
+from tests.legacy.config import ScrapperConfig as LegacyConfig
+from tests.legacy.processors import JevHtmlToWebPageEntities
 import base64
 import threading
 import time
 from collections import Counter
 
 from src.common.scrapper import (
-    AuditStore, JevHtmlToWebPageEntities, PageCapture, Scrapper, ScrapperConfig,
+    AuditStore, PageCapture, Scrapper, ScrapperConfig,
     WebPageEntities, WebPageEntity, canonical_uri,
 )
 
@@ -27,23 +29,23 @@ def capture(uri):
                        base64.b64encode(b'jpeg-bytes').decode())
 
 
-def test_page_is_visited_classified_and_archived_before_doubtful_hops(tmp_path):
+def test_doubtful_classification_does_not_filter_discovered_urls(tmp_path):
     root = 'https://shop.test/'
-    graph = {root: result(root, confidence=0.3, next_uris=(root+'next',))}
+    graph = {root: result(root, confidence=0.3, next_uris=(root+'next',)), root+'next':result(root+'next')}
     classified = []
     def classify(page):
         classified.append(page.final_uri)
         return graph[page.final_uri]
     events = []
-    scraper = Scrapper(ScrapperConfig(max_threads=2, max_hops=2, max_sites=5,
+    scraper = Scrapper(LegacyConfig(max_threads=2, max_hops=2, max_sites=5,
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=capture, html_to_entities=classify))
     summary = scraper.run([root], events.append)
-    assert classified == [root]
-    assert (summary.scheduled, summary.succeeded, summary.doubtful, summary.content_events) == (1, 1, 1, 1)
-    assert len(events) == 1 and events[0].doubtful
+    assert classified == [root,root+'next']
+    assert (summary.scheduled, summary.succeeded, summary.doubtful, summary.content_events) == (2, 2, 1, 2)
+    assert len(events) == 2 and events[0].doubtful and not events[1].doubtful
     assert [edge['disposition'] for edge in scraper.audit.list_edges(summary.run_id)] == [
-        'scheduled', 'doubtful_page']
+        'scheduled', 'scheduled']
     visit = scraper.audit.list_doubtful(summary.run_id)[0]
     history = scraper.audit.get_visit(visit['id'])
     assert history['result']['entities'][0]['role'] == 'attributes'
@@ -60,16 +62,19 @@ def test_navigation_limits_duplicates_and_uncertain_entities(tmp_path):
         root+'b': result(root+'b', next_uris=(root, root+'d')),
         root+'c': result(root+'c', next_uris=(root+'e',), nav_confidence=0.2),
         root+'d': result(root+'d'),
+        root+'e': result(root+'e'),
     }
-    scraper = Scrapper(ScrapperConfig(max_threads=2, max_hops=2, max_sites=4,
+    scraper = Scrapper(LegacyConfig(max_threads=2, max_hops=2, max_sites=4,
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=capture,
                                       html_to_entities=lambda page: pages[page.final_uri]))
     summary = scraper.run([root])
     assert (summary.scheduled, summary.succeeded, summary.doubtful) == (4, 4, 0)
-    assert {row['requested_uri'] for row in scraper.audit.list_visits(summary.run_id)} == set(pages)
+    visited = {row['requested_uri'] for row in scraper.audit.list_visits(summary.run_id)}
+    assert {root,root+'b',root+'c'} <= visited <= set(pages)
+    assert len(visited)==4
     edges = scraper.audit.list_edges(summary.run_id)
-    assert {'duplicate', 'doubtful_entity'} <= {edge['disposition'] for edge in edges}
+    assert {'duplicate', 'max_sites'} <= {edge['disposition'] for edge in edges}
     assert all(edge['to_visit_id'] for edge in edges if edge['disposition'] == 'scheduled')
     assert len(scraper.audit.list_events(summary.run_id)) == 4
     assert any(event['payload']['doubtful'] for event in scraper.audit.list_events(summary.run_id)) is False
@@ -83,7 +88,7 @@ def test_retries_and_site_limit_are_audited(tmp_path):
         if uri == first and attempts[uri] == 1:
             raise RuntimeError('temporary')
         return capture(uri)
-    scraper = Scrapper(ScrapperConfig(max_threads=1, max_hops=0, max_sites=1,
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_hops=0, max_sites=1,
                                       max_retries=1, audit_dir=tmp_path,
                                       uri_to_html=flaky,
                                       html_to_entities=lambda page: result(page.final_uri)))
@@ -99,7 +104,7 @@ def test_failed_classification_keeps_full_capture_and_attempts(tmp_path):
     uri = 'https://shop.test/fail'
     def broken(_page):
         raise RuntimeError('model offline')
-    scraper = Scrapper(ScrapperConfig(max_threads=1, max_hops=0, max_sites=1,
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_hops=0, max_sites=1,
                                       max_retries=2, audit_dir=tmp_path,
                                       uri_to_html=capture, html_to_entities=broken))
     summary = scraper.run([uri])
@@ -123,7 +128,7 @@ def test_parallel_workers_respect_limit_and_depth(tmp_path):
         with lock:
             active -= 1
         return capture(uri)
-    scraper = Scrapper(ScrapperConfig(max_threads=2, max_hops=0, max_sites=3,
+    scraper = Scrapper(LegacyConfig(max_threads=2, max_hops=0, max_sites=3,
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=slow,
                                       html_to_entities=lambda page: result(page.final_uri, next_uris=(page.final_uri+'child',))))
@@ -144,7 +149,7 @@ def test_bfs_discovery_order_is_stable_when_workers_finish_out_of_order(tmp_path
         if uri == a:
             time.sleep(0.08)
         return capture(uri)
-    scraper = Scrapper(ScrapperConfig(max_threads=2, max_hops=2, max_sites=5,
+    scraper = Scrapper(LegacyConfig(max_threads=2, max_hops=2, max_sites=5, traversal="bfs",
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=uneven_capture,
                                       html_to_entities=lambda page: pages[page.final_uri]))
@@ -167,10 +172,12 @@ def test_jev_html_processor_keeps_generic_entities_and_dom_values():
             if key == 'page_kind':
                 choice = 'listing'
             elif key == 'primary_group':
-                choice = next((g['id'] for g in state['groups'] if any(x['url'] == 'https://shop.test/one' for x in g['links'])), 'other')
+                choice = next((g['id'] for g in state['summary']['blocks'] if g['class'] == 'products'), 'other')
+            elif key.startswith('f') and key[1:].isdigit():
+                choice = 'product_link'
             else:
                 group = next(g for g in state['groups'] if g['id'] == key)
-                choice = 'primary_products' if any(x['url'] == 'https://shop.test/one' for x in group['links']) else 'categories' if 'Cremas' in group['text'] else 'other'
+                choice = 'products' if any(x['url'] == 'https://shop.test/one' for x in group['links']) else 'categories' if 'Cremas' in group['text'] else 'other'
             answers[key] = {'choice': choice, 'confidence': 0.9}
         return {'answers': answers}
     output = JevHtmlToWebPageEntities(predict=predict)(
@@ -187,7 +194,7 @@ def test_jev_html_processor_keeps_generic_entities_and_dom_values():
 
 def test_history_reopens_and_callback_errors_do_not_stop_crawl(tmp_path):
     uri = 'https://shop.test/item'
-    scraper = Scrapper(ScrapperConfig(max_threads=1, max_hops=0, max_sites=1,
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_hops=0, max_sites=1,
                                       max_retries=0, audit_dir=tmp_path,
                                       uri_to_html=capture,
                                       html_to_entities=lambda page: result(page.final_uri)))
@@ -203,7 +210,7 @@ def test_history_reopens_and_callback_errors_do_not_stop_crawl(tmp_path):
 
 def test_same_host_only_rejects_external_navigation(tmp_path):
     uri = 'https://shop.test/'
-    scraper = Scrapper(ScrapperConfig(max_threads=1, max_hops=1, max_sites=3,
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_hops=1, max_sites=3,
                                       max_retries=0, audit_dir=tmp_path,
                                       same_host_only=True, uri_to_html=capture,
                                       html_to_entities=lambda page: result(page.final_uri,
@@ -212,3 +219,38 @@ def test_same_host_only_rejects_external_navigation(tmp_path):
     assert summary.scheduled == 1
     assert [edge['disposition'] for edge in scraper.audit.list_edges(summary.run_id)] == [
         'scheduled', 'outside_seed_hosts']
+
+
+def test_balanced_traversal_descends_before_exhausting_broad_frontier(tmp_path):
+    root = 'https://shop.test/'
+    children = [root + str(i) for i in range(20)]
+    deep = children[0] + '/detail'
+    calls = []
+    def classify(page):
+        calls.append(page.final_uri)
+        links = children if page.final_uri == root else [deep] if page.final_uri == children[0] else []
+        return result(page.final_uri, next_uris=links)
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_sites=4, max_hops=2,
+        max_retries=0, audit_dir=tmp_path, uri_to_html=capture, html_to_entities=classify))
+    summary = scraper.run([root])
+    assert summary.scheduled == 4
+    assert deep in calls and len(set(calls) & set(children)) == 2
+    assert any(e['disposition'] == 'max_sites' for e in scraper.audit.list_edges(summary.run_id))
+    assert scraper.audit.get_run(summary.run_id)['config']['traversal'] == 'balanced'
+
+
+def test_url_deduplication_preserves_content_variants(tmp_path):
+    base = 'https://shop.test/catalog'
+    aliases = [base+'?b=2&a=1', base+'?a=1&b=2#top',
+               base+'?utm_source=campaign&b=2&a=1', base+'?b=2&a=1&fbclid=click',
+               base+'?page=2&a=1&b=2']
+    calls = []
+    def fetch(uri):
+        calls.append(uri)
+        return capture(uri)
+    scraper = Scrapper(LegacyConfig(max_threads=1, max_sites=10, max_hops=0,
+        audit_dir=tmp_path, uri_to_html=fetch, html_to_entities=lambda p: result(p.final_uri)))
+    summary = scraper.run(aliases)
+    assert summary.scheduled == len(calls) == 2
+    assert canonical_uri(base+'?a=x&a=y') != canonical_uri(base+'?a=y&a=x')
+    assert canonical_uri(base+'/') != canonical_uri(base)

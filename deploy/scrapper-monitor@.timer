@@ -1,0 +1,10 @@
+[Unit]
+Description=Check extraction for seed %i every ten minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/10:00
+Persistent=true
+Unit=scrapper-monitor@%i.service
+
+[Install]
+WantedBy=timers.target

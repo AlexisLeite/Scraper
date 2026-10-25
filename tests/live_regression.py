@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _credentials import activate_test_key
-from src.common.jev_extractor import inspect_url
+from tests.legacy.jev_extractor import inspect_url
 
 CASES = [
     ('Vichy listado', 'https://www.vichy.es/todos-los-productos/cuidado-de-la-piel', 'listing'),

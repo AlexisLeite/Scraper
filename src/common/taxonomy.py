@@ -1,0 +1,48 @@
+"""Versioned local block and field classes. Every choice permits abstention."""
+VERSION = 'commercial-v2'
+BLOCKS = {
+    'products': 'Colección cuyos elementos repetidos son tarjetas completas de productos individuales. No un contenedor que mezcla filtros, navegación y otras secciones. Todavía no decidir si es principal.',
+    'product': 'Presentación de un producto individual o tarjeta de producto.',
+    'attributes': 'Información de producto: descripción, beneficios, ingredientes, uso o especificaciones.',
+    'offer': 'Oferta comercial: precio, descuento, moneda, disponibilidad o vendedor.',
+    'reviews': 'Sección o lista de reseñas, widget de opiniones o estadísticas de valoración.',
+    'qa': 'Preguntas y respuestas sobre un producto.',
+    'discussion': 'Hilo o mensajes de un debate.',
+    'editorial': 'Artículo, guía, consejo o comparativa.',
+    'categories': 'Navegación por categorías, necesidades o líneas de productos.',
+    'breadcrumb': 'Migas de pan: recorrido jerárquico de la página.',
+    'site_menu': 'Navegación general del sitio.',
+    'collection_control': 'Control que actúa sobre una colección: cargar más, pasar página, mover una galería o carrusel. No implica paginación confirmada.',
+    'search': 'Búsqueda de contenido.',
+    'filters': 'Filtros o selección de orden de una colección.',
+    'header': 'Cabecera del sitio.',
+    'footer': 'Pie del sitio.',
+    'brand': 'Identidad de marca o logo.',
+    'promotion': 'Mensaje promocional o campaña.',
+    'service': 'Contacto, ayuda, condiciones, envíos o información institucional.',
+    'other': 'Otro: bloque ajeno a estas clases o evidencia insuficiente; descartar de la síntesis.',
+}
+FIELDS = {
+    'name': 'Nombre o título del producto.', 'brand': 'Marca o línea del producto.',
+    'image': 'Imagen del producto.', 'product_link': 'Enlace a la ficha del producto.',
+    'description': 'Descripción del producto.', 'benefit': 'Beneficio declarado por la página.',
+    'ingredients': 'Ingredientes o composición.', 'usage': 'Instrucciones de uso.',
+    'size': 'Tamaño, cantidad o variante.', 'price': 'Precio actual.',
+    'previous_price': 'Precio anterior.', 'availability': 'Disponibilidad del producto.',
+    'rating': 'Puntuación; conservar la escala visible.',
+    'rating_count': 'Cantidad anunciada de valoraciones o reseñas; no registros cargados.',
+    'review_title': 'Título de una reseña individual.', 'review_body': 'Texto de una reseña individual.',
+    'author': 'Autor visible.', 'date': 'Fecha visible.',
+    'question': 'Texto de una pregunta.', 'answer': 'Texto de una respuesta.',
+    'post': 'Texto de un mensaje de discusión.',
+    'other': 'Otro o evidencia insuficiente; descartar.',
+}
+FIELD_CLASSES = {
+    'products': ('name', 'brand', 'image', 'product_link', 'description', 'size', 'price', 'previous_price', 'availability', 'rating', 'rating_count'),
+    'product': ('name', 'brand', 'image', 'product_link', 'description', 'size', 'price', 'previous_price', 'availability', 'rating', 'rating_count'),
+    'attributes': ('description', 'benefit', 'ingredients', 'usage', 'size'),
+    'offer': ('price', 'previous_price', 'availability', 'size'),
+    'reviews': ('review_title', 'review_body', 'author', 'date', 'rating', 'rating_count'),
+    'qa': ('question', 'answer', 'author', 'date'),
+    'discussion': ('post', 'author', 'date'),
+}

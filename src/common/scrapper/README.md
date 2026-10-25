@@ -1,52 +1,36 @@
-# Orquestador de scraping
+# Scrapper semántico
 
-`Scrapper` recibe URI iniciales y visita cada una antes de decidir qué hacer con sus enlaces. Usa una cola BFS: completa un nivel antes de comenzar el siguiente y conserva el orden de descubrimiento aun si los trabajadores terminan en otro orden. Usa `ThreadPoolExecutor` para limitar el paralelismo. Los procesadores son inyectables; por defecto, Playwright produce `PageCapture` y Jev clasifica grupos del DOM como `WebPageEntities`.
+`Scrapper` administra cola, deduplicación, concurrencia y presupuesto.
+`PageExecutor` abre y cierra el contexto de Playwright en el mismo trabajador.
+El único extractor integrado es `SemanticMetadataStrategy`.
 
 ```python
-from src.common.scrapper import Scrapper, ScrapperConfig
+from src.common.scrapper import Scrapper, ScrapperConfig, SemanticMetadataStrategy
 
-scrapper = Scrapper(ScrapperConfig(
-    max_threads=3,
-    max_hops=2,
-    max_sites=40,
-    max_retries=1,
-    min_page_confidence=0.7,
-    min_entity_confidence=0.7,
+scraper = Scrapper(ScrapperConfig(
+    max_sites=1, max_hops=0, max_threads=1,
+    strategy=SemanticMetadataStrategy(follow_navigation=False),
 ))
-scrapper.subscribe(lambda event: print(event.uri, event.entity.role, event.doubtful))
-summary = scrapper.run(['https://ejemplo.com/catalogo'])
-print(summary.run_id, scrapper.audit.list_doubtful(summary.run_id))
+summary = scraper.run(['https://example.org/'])
 ```
 
-`max_hops` cuenta las URI iniciales como salto 0. `max_sites` reserva cupos para URI canónicas únicas; los reintentos no consumen otros cupos. Por defecto, `same_host_only=False`: también se pueden seguir enlaces a otros hosts si Jev los clasificó como navegación. Para limitar el recorrido a los hosts iniciales, usa `same_host_only=True`.
+La extracción usa HTML semántico, datos estructurados y colecciones repetidas.
+Los campos sin marcado estándar se interpretan mediante Jev (`TYPESAFE_API_KEY`),
+siempre dentro del extractor semántico y con valores referidos al DOM. El consumo
+de entrada y salida y el coste de entrada se conservan en la auditoría. Las
+pruebas locales simulan esta etapa, sin llamadas pagas por defecto.
+Las observaciones de menús mediante hover permanecen dentro del documento.
+No hacen clic, no expanden colecciones ni visitan destinos. Los estados nuevos
+conservan evidencia anterior y posterior, y la cobertura explicita límites,
+fallos y navegación no observable en entradas estáticas.
 
-Cada página se captura y clasifica normalmente. Si la confianza del tipo de página queda bajo `min_page_confidence`, se archiva como dudosa y **ninguno de sus saltos se toma automáticamente**. Si una entidad de navegación queda bajo `min_entity_confidence`, solo se detienen los enlaces de esa entidad. Los enlaces omitidos permanecen en el historial con su motivo. Cada entidad de contenido emite un `ContentEvent`, incluso si la confianza es baja; `event.doubtful` permite tratarlo aparte.
+Las estrategias personalizadas de pruebas pueden implementar
+`process(page, api)` y utilizar `enqueue`, `emit_content`, `consume_hop` y
+`report_expense`. Cero debe ser explícito; importes desconocidos producen gasto
+parcial. Las expansiones sí consumen visita y salto antes de interactuar y no se
+reintentan automáticamente después de producir efectos.
 
-La lista de tipos de entidad puede ampliarse. `WebPageEntity` guarda papel, propósitos (`content`, `navigation` o ambos), texto y enlaces exactos del DOM, confianza, evidencia y selector. Los grupos clasificados como `other` también quedan archivados para inspección.
-
-## Procesadores personalizados
-
-Pasa `uri_to_html` y `html_to_entities` a `ScrapperConfig`. El primero recibe una URI y devuelve `PageCapture`; el segundo recibe esa captura y devuelve `WebPageEntities`. Ambos deben tolerar llamadas desde varios threads cuando `max_threads > 1`.
-
-## Historial
-
-Por defecto, `AuditStore` escribe en `data/scrapper/`, excluido de Git. SQLite indexa recorridos, visitas, reintentos, enlaces descubiertos con su decisión, eventos y resultados. `captures/` guarda **cada HTML renderizado completo** comprimido y la captura JPEG de página completa. También se archiva el HTML si Jev falla después de la captura.
-
-```python
-visits = scrapper.audit.list_visits(summary.run_id)
-visit = scrapper.audit.get_visit(visits[0]['id'])
-html = scrapper.audit.read_html(visit['id'])
-screenshot_bytes = scrapper.audit.read_screenshot(visit['id'])
-edges = scrapper.audit.list_edges(summary.run_id)
-events = scrapper.audit.list_events(summary.run_id)
-```
-
-`get_visit` reúne la decisión, cada intento, enlaces salientes y eventos. `read_html(visit_id, attempt=n)` recupera una captura anterior para estudiarla o reevaluarla más adelante. La clave de Jev no se guarda en el historial.
-
-Los recorridos nuevos también guardan cada llamada de Jev en `model_calls`, con modelo, intento, cantidad de bytes enviados y `usage.input_tokens`/`usage.output_tokens` informados por la API. `get_run`, `list_runs` y `get_visit` agregan `usage` con total de llamadas, tokens y `unreported_calls`; `exact=false` señala que alguna llamada no informó uso. Los recorridos previos tienen `usage=null`. No se guardan prompts ni credenciales en esta tabla.
-
-## Interfaz web
-
-La pestaña **Recorrer sitio** permite indicar una URL inicial, un máximo de sitios y un máximo de saltos. Muestra el progreso y conserva los recorridos en el servidor. El historial enumera las páginas visitadas en orden de descubrimiento; cada página ofrece la captura de página completa, las entidades clasificadas por Jev, el HTML renderizado descargable y los enlaces descubiertos con la decisión de seguirlos o no. Los enlaces que no se visitaron también se consultan dentro de la página que los descubrió.
-
-La API usa `POST /api/scrapes` para iniciar el trabajo, `GET /api/scrapes/jobs/{job_id}` para consultar progreso, `GET /api/scrapes` para listar recorridos y `GET /api/scrapes/{run_id}` para obtener páginas y enlaces en orden de descubrimiento. `GET /api/scrapes/{run_id}/visits/{visit_id}` entrega el detalle; sus subrutas `/screenshot` y `/html` recuperan la evidencia archivada.
+`AuditStore` conserva visitas, estados, HTML, capturas, gastos y eventos. En
+producción utiliza PostgreSQL; los directorios temporales explícitos usan SQLite.
+Los identificadores del extractor en el historial no se reescriben al retirar una
+implementación. La API y el ejecutor predeterminado solo crean trabajo semántico.

@@ -15,3 +15,11 @@ screenshots/
 *.webp
 
 data/
+
+# Next.js build outputs and dependencies
+node_modules/
+.next/
+src/web/out/
+
+# Local extraction reports, saved pages, and regression captures
+/output/

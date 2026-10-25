@@ -1,136 +1,87 @@
 """HTTP API and frontend mount for the local studio."""
 import ipaddress
 import logging
-import os
-import shutil
 import subprocess
-import time
 import uuid
 from pathlib import Path
 from threading import Lock, Thread
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..common import jev_connector
-from ..common.jev_extractor import MAX_CAPTURE_CHARS, inspect_url
-from ..common.schema import generate_schema, validate_questions
-from ..common.scrapper import AuditStore, Scrapper, ScrapperConfig, canonical_uri
+from ..common.dom import clean_document
+from ..common.scrapper import (AuditStore, SemanticMetadataStrategy,
+                              Scrapper, ScrapperConfig, canonical_uri)
 from ..common.uri_to_html import _valid_url
+from ..common.scrapper.url_policy import URLPolicy
 
-ROOT = Path(__file__).resolve().parents[1] / 'app'
-_jobs = {}
-_jobs_lock = Lock()
+FRONTEND_ROOT = Path(__file__).resolve().parents[1] / 'web' / 'out'
 _scrape_jobs = {}
 _scrape_jobs_lock = Lock()
 _audit_store = AuditStore()
 _log = logging.getLogger('markup_studio')
-app = FastAPI(title='Markup Studio', docs_url='/api/docs')
+app = FastAPI(title='Scrapper', docs_url='/api/docs')
+from ..persistent.api import router as persistent_router
+app.include_router(persistent_router(audit=_audit_store))
+app.mount('/_next', StaticFiles(directory=FRONTEND_ROOT / '_next', check_dir=False), name='next-assets')
 
-class CaptureRequest(BaseModel):
+class ExtractRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     url: str = Field(min_length=8, max_length=2048)
-    objective: str = Field(default='', max_length=1000)
-
-class HtmlRequest(CaptureRequest):
-    html: str = Field(min_length=1, max_length=MAX_CAPTURE_CHARS)
-
-class ClassifyRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=50_000)
-    classification_schema: dict = Field(alias='schema')
-
-class GenerateRequest(BaseModel):
-    instructions: str = Field(min_length=8, max_length=4000)
 
 class ScrapeRequest(BaseModel):
-    url: str = Field(min_length=8, max_length=2048)
+    url: str | None = Field(default=None, min_length=8, max_length=2048)
+    urls: list[str] = Field(default_factory=list, max_length=100)
+    strategy: Literal['semantic'] = 'semantic'
     max_sites: int = Field(default=10, ge=1, le=100)
     max_hops: int = Field(default=2, ge=0, le=8)
+    max_threads: int = Field(default=3, ge=1, le=50)
+    allowed_domains: list[str] = Field(default_factory=list, max_length=100)
+    blocked_domains: list[str] = Field(default_factory=list, max_length=100)
+    allowed_url_patterns: list[str] = Field(default_factory=list, max_length=100)
+    blocked_url_patterns: list[str] = Field(default_factory=list, max_length=100)
 
+    @property
+    def initial_urls(self):
+        return ([self.url] if self.url else []) + self.urls
 
-def classify(content, schema):
-    return jev_connector.predict(content, validate_questions(schema))
+    @model_validator(mode='after')
+    def validate_seeds(self):
+        if not self.initial_urls or any(not 8 <= len(url) <= 2048 for url in self.initial_urls):
+            raise ValueError('Indica una o más URL iniciales válidas.')
+        if any(len(value) > 2048 for values in (self.allowed_domains, self.blocked_domains,
+               self.allowed_url_patterns, self.blocked_url_patterns) for value in values):
+            raise ValueError('Cada regla de URL admite un máximo de 2048 caracteres.')
+        if (self.allowed_domains or self.allowed_url_patterns) and (self.blocked_domains or self.blocked_url_patterns):
+            raise ValueError('La lista blanca y la lista negra son excluyentes. Elige una sola.')
+        URLPolicy(self.allowed_domains, self.blocked_domains,
+                  self.allowed_url_patterns, self.blocked_url_patterns)
+        return self
 
-
-def _update_job(job_id, **changes):
-    with _jobs_lock:
-        _jobs[job_id].update(changes)
-
-
-def _run_job(job_id, url, objective, captured=None):
-    try:
-        result = inspect_url(url, objective, lambda phase, percent, message:
-                             _update_job(job_id, phase=phase, percent=percent, message=message), captured)
-        _update_job(job_id, status='done', phase='done', percent=100, message='Análisis completo', result=result)
-    except (ValueError, RuntimeError) as exc:
-        _update_job(job_id, status='error', message=str(exc))
-    except Exception:
-        _log.exception('Page analysis failed')
-        _update_job(job_id, status='error', message='No se pudo analizar la página; revisa el servidor.')
 
 @app.get('/')
 def index():
-    return FileResponse(ROOT / 'index.html')
-
-@app.get('/app.css')
-def styles():
-    return FileResponse(ROOT / 'app.css', media_type='text/css')
-
-@app.get('/app.js')
-def script():
-    return FileResponse(ROOT / 'app.js', media_type='text/javascript')
-
-@app.get('/scrape.js')
-def scrape_script():
-    return FileResponse(ROOT / 'scrape.js', media_type='text/javascript')
+    index_path = FRONTEND_ROOT / 'index.html'
+    if not index_path.is_file():
+        raise HTTPException(503, 'Compila el portal con npm ci --prefix src/web y npm run build --prefix src/web.')
+    return FileResponse(index_path, headers={'Cache-Control':'no-cache'})
 
 @app.get('/api/health')
 def health():
-    return {'codex_cli': bool(shutil.which('codex.cmd' if os.name == 'nt' else 'codex')),
-            'jev': {'configured': jev_connector.configured()}}
-
-@app.post('/api/capture')
-async def capture(request: CaptureRequest):
-    try:
-        return await run_in_threadpool(inspect_url, request.url, request.objective)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    return {'extractor': 'semantic', 'extractors': ['semantic']}
 
 
-def _start_job(url, objective, captured=None):
-    with _jobs_lock:
-        now = time.time()
-        for key in list(_jobs):
-            if _jobs[key]['status'] != 'running' and now - _jobs[key]['created'] > 900:
-                del _jobs[key]
-        if sum(job['status'] == 'running' for job in _jobs.values()) >= 3:
-            raise HTTPException(503, 'Hay demasiados análisis activos; espera a que termine uno.')
-        job_id = uuid.uuid4().hex
-        _jobs[job_id] = {'status': 'running', 'phase': 'queued', 'percent': 0,
-                         'message': 'En cola', 'created': now, 'result': None}
-    Thread(target=_run_job, args=(job_id, url, objective, captured), daemon=True).start()
-    return {'job_id': job_id}
-
-@app.post('/api/analyze', status_code=202)
-def start_analysis(request: CaptureRequest):
-    _valid_url(request.url)
-    return _start_job(request.url, request.objective)
-
-@app.post('/api/analyze-html', status_code=202)
-def start_html_analysis(request: HtmlRequest):
-    _valid_url(request.url)
-    return _start_job(request.url, request.objective, (request.html, '', request.url, ''))
-
-@app.get('/api/jobs/{job_id}')
-def job_status(job_id: str):
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            raise HTTPException(404, 'Análisis no encontrado o vencido.')
-        return {key: value for key, value in job.items() if key != 'created'}
+@app.post('/api/capture', deprecated=True)
+@app.post('/api/analyze', deprecated=True)
+@app.post('/api/analyze-html', deprecated=True)
+@app.get('/api/jobs/{job_id}', deprecated=True)
+@app.post('/api/classify', deprecated=True)
+@app.post('/api/generate-schema', deprecated=True)
+def retired_extractor(job_id: str | None = None):
+    raise HTTPException(410, 'Los extractores anteriores fueron retirados. Usa Extraer (/api/extract).')
 
 
 def _run_scrape(job_id: str, request: ScrapeRequest):
@@ -138,9 +89,14 @@ def _run_scrape(job_id: str, request: ScrapeRequest):
         with _scrape_jobs_lock:
             _scrape_jobs[job_id].update(update)
     try:
-        scraper = Scrapper(ScrapperConfig(max_threads=3, max_hops=request.max_hops,
-                                         max_sites=request.max_sites), audit=_audit_store)
-        summary = scraper.run([request.url], on_progress=progress)
+        scraper = Scrapper(ScrapperConfig(max_threads=request.max_threads, max_hops=request.max_hops,
+                                         max_sites=request.max_sites,
+                                         allowed_domains=tuple(request.allowed_domains),
+                                         blocked_domains=tuple(request.blocked_domains),
+                                         allowed_url_patterns=tuple(request.allowed_url_patterns),
+                                         blocked_url_patterns=tuple(request.blocked_url_patterns),
+                                         strategy=SemanticMetadataStrategy(follow_navigation=request.max_hops>0)), audit=_audit_store)
+        summary = scraper.run(request.initial_urls, on_progress=progress)
         with _scrape_jobs_lock:
             _scrape_jobs[job_id].update(status='done', summary=vars(summary))
     except Exception:
@@ -152,7 +108,8 @@ def _run_scrape(job_id: str, request: ScrapeRequest):
 @app.post('/api/scrapes', status_code=202)
 def start_scrape(request: ScrapeRequest):
     try:
-        canonical_uri(request.url)
+        for url in request.initial_urls:
+            canonical_uri(url)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     with _scrape_jobs_lock:
@@ -164,6 +121,14 @@ def start_scrape(request: ScrapeRequest):
                                 'failed': 0, 'doubtful': 0, 'content_events': 0}
     Thread(target=_run_scrape, args=(job_id, request), daemon=True).start()
     return {'job_id': job_id}
+
+
+@app.post('/api/extract', status_code=202)
+def extract_page(request: ExtractRequest):
+    # Isolated from the persistent discovery queue. Both limits are enforced
+    # server-side so neither links nor collection expansions can start a visit.
+    return start_scrape(ScrapeRequest(url=request.url, strategy='semantic',
+                                     max_sites=1, max_hops=0, max_threads=1))
 
 
 @app.get('/api/scrapes')
@@ -211,11 +176,14 @@ def scrape_screenshot(run_id: str, visit_id: str):
 
 
 @app.get('/api/scrapes/{run_id}/visits/{visit_id}/html')
-def scrape_html(run_id: str, visit_id: str):
+def scrape_html(run_id: str, visit_id: str, clean: bool = False):
     _scrape_visit(run_id, visit_id)
     html = _audit_store.read_html(visit_id)
     if html is None:
         raise HTTPException(404, 'Esta página no tiene HTML disponible.')
+    if clean:
+        soup, _ = clean_document(html)
+        html = str(soup)
     return Response(html, media_type='text/html; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="pagina-renderizada.html"'})
 
@@ -231,21 +199,6 @@ def scrape_action_artifact(run_id: str, visit_id: str, index: int, phase: str, k
     return Response(content, media_type='image/jpeg' if kind == 'screenshot' else 'text/html; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="accion.html"'} if kind == 'html' else {})
 
-@app.post('/api/classify')
-async def classify_endpoint(request: ClassifyRequest):
-    try:
-        return await run_in_threadpool(classify, request.content, request.classification_schema)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(503, str(exc)) from exc
-
-@app.post('/api/generate-schema')
-async def generate_endpoint(request: GenerateRequest):
-    try:
-        return await run_in_threadpool(generate_schema, request.instructions)
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(503, str(exc)) from exc
 
 def run():
     """Bind only to the current Tailscale IPv4 address."""

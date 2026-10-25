@@ -1,3 +1,4 @@
+from tests.legacy.config import ScrapperConfig as LegacyConfig
 import base64
 import time
 
@@ -29,15 +30,13 @@ def test_scrape_api_persists_discovery_capture_and_jev_results(tmp_path, monkeyp
                                base64.b64encode(b'jpeg-bytes').decode())
         def classify(page):
             return result(page.final_uri, next_uris=(child,) if page.final_uri == root else ())
-        return real_scrapper(ScrapperConfig(max_threads=config.max_threads,
+        return real_scrapper(LegacyConfig(max_threads=config.max_threads,
                                            max_hops=config.max_hops, max_sites=config.max_sites,
                                            max_retries=0, audit_dir=tmp_path,
                                            uri_to_html=capture, html_to_entities=classify), audit=audit)
 
     monkeypatch.setattr(server, 'Scrapper', fake_scrapper)
     client = TestClient(server.app)
-    assert 'id="page-scrape"' in client.get('/').text
-    assert client.get('/scrape.js').status_code == 200
     assert client.post('/api/scrapes', json={'url': 'file:///etc/passwd'}).status_code == 400
     assert client.post('/api/scrapes', json={'url': root, 'max_sites': 101}).status_code == 422
     response = client.post('/api/scrapes', json={'url': root, 'max_sites': 2, 'max_hops': 1})

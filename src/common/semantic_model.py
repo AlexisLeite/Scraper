@@ -20,6 +20,9 @@ _log = logging.getLogger(__name__)
 class UsageRecordingError(RuntimeError):
     """The provider answered but its usage could not be saved; do not rebill by retrying."""
 
+    retryable = False
+    phase = 'usage'
+
 
 @contextmanager
 def record_usage(callback: Callable[[dict], None]):

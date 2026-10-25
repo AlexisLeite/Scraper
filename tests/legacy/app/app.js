@@ -270,7 +270,8 @@ function renderCapture(result, restored = false) {
   $('stat-main-blocks').textContent = result.stats.candidate_groups.toLocaleString('es');
   $('stat-other-blocks').textContent = result.stats.decided_groups.toLocaleString('es');
   $('stat-content-chars').textContent = result.stats.content_chars.toLocaleString('es');
-  $('coverage-note').textContent = 'Jev clasificó grupos estructurales; los valores y enlaces se extrajeron del DOM. Las acciones requieren verificación independiente.';
+  const summary = result.classification?.summary;
+  $('coverage-note').textContent = summary ? `Jev dedujo el tipo de página del resumen de ${summary.blocks.length} bloques reconocidos. ${summary.excluded_count ?? summary.discarded_count} bloques quedaron excluidos. Los campos conservan sus valores del DOM; las acciones se verifican por separado.` : 'Jev clasificó grupos estructurales; los valores y enlaces se extrajeron del DOM. Las acciones requieren verificación independiente.';
   $('site-shot').src = result.screenshot ? `data:image/jpeg;base64,${result.screenshot}` : '';
   $('headings-list').replaceChildren(...(result.headings.length ? result.headings : ['Sin encabezados visibles']).map((item) => {
     const li = document.createElement('li'); li.textContent = item; return li;
