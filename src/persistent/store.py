@@ -212,7 +212,10 @@ class Store:
         activity = self.discover(seed_id,body['url'],0,manual=True)
         return dict(activity_id=activity,engine_enabled=self.settings()['enabled'])
 
-    def clear_seed_history(self, seed_id, audit):
+    def delete_seed(self, seed_id, audit):
+        return self.clear_seed_history(seed_id, audit, remove_seed=True)
+
+    def clear_seed_history(self, seed_id, audit, *, remove_seed=False):
         # Lock admission before checking active work or removing associations.
         with self.db() as db:
             db.execute('ATTACH DATABASE ? AS audit_history', (str(audit.database),))
@@ -257,6 +260,9 @@ class Store:
                 WHERE seed_id=?""",(seed_id,))
             db.execute('DELETE FROM pages WHERE id IN (SELECT page_id FROM removed_pages)')
             db.execute('DELETE FROM domains WHERE name NOT IN (SELECT domain FROM pages)')
+            if remove_seed:
+                db.execute('DELETE FROM extraction_checks WHERE seed_id=?',(seed_id,))
+                db.execute('DELETE FROM seeds WHERE id=?',(seed_id,))
         errors = []
         with self.db() as db:
             for row in db.execute('SELECT path FROM pending_capture_deletions').fetchall():

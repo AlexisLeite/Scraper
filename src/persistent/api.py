@@ -128,6 +128,15 @@ def router(store=None,audit=None):
         except LookupError as exc:
             raise HTTPException(404,str(exc)) from exc
 
+    @api.delete('/seeds/{seed_id}')
+    def delete_seed(seed_id: str):
+        try:
+            return store.delete_seed(seed_id,audit)
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409,str(exc)) from exc
+
     @api.delete('/seeds/{seed_id}/history')
     def clear_seed_history(seed_id: str):
         try:
